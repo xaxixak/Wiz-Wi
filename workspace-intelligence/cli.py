@@ -773,7 +773,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_index.add_argument(
         "--passes",
         nargs="+",
-        choices=["scan", "treesitter", "patterns"],
+        choices=["scan", "treesitter", "patterns", "connections"],
         default=None,
         help="Which passes to run (default: all)",
     )
