@@ -423,6 +423,11 @@ async function loadData() {
   for (const t of nodeTypes) filters.nodeType[t] = true;
   for (const g of Object.keys(EDGE_GROUPS)) filters.edgeGroup[g] = true;
 
+  // For large graphs, start with micro tier hidden for better performance
+  if (rawData.nodes.length > 200) {
+    filters.tier.micro = false;
+  }
+
   buildFilterUI();
   initGraph();
   updateGraph();
@@ -548,12 +553,14 @@ function initGraph() {
     });
   svg.call(zoom);
 
-  // Initialize simulation
+  // Initialize simulation — optimized for large graphs
   simulation = d3.forceSimulation()
-    .force('link', d3.forceLink().id(d => d.id).distance(80))
-    .force('charge', d3.forceManyBody().strength(-200))
+    .force('link', d3.forceLink().id(d => d.id).distance(60))
+    .force('charge', d3.forceManyBody().strength(-120).theta(0.9).distanceMax(300))
     .force('center', d3.forceCenter(width / 2, height / 2))
-    .force('collision', d3.forceCollide().radius(20))
+    .force('collision', d3.forceCollide().radius(12).iterations(1))
+    .alphaDecay(0.05)
+    .velocityDecay(0.4)
     .on('tick', ticked);
 }
 
@@ -738,10 +745,10 @@ function updateGraph() {
   // Update selected highlight
   nodeMerged.classed('node-selected', d => d.id === selectedNodeId);
 
-  // Restart simulation
+  // Restart simulation — lower alpha = settles faster = less CPU
   simulation.nodes(nodes);
   simulation.force('link').links(links);
-  simulation.alpha(0.6).restart();
+  simulation.alpha(0.4).restart();
 }
 
 function nodeRadius(edgeCount) {
@@ -756,21 +763,31 @@ function truncate(str, len) {
 // -----------------------------------------------------------------------
 // Simulation tick
 // -----------------------------------------------------------------------
+let _tickFrame = null;
 function ticked() {
-  linkG.selectAll('.edge-group').each(function(d) {
-    const group = d3.select(this);
-    group.select('.edge-line')
-      .attr('x1', d.source.x)
-      .attr('y1', d.source.y)
-      .attr('x2', d.target.x)
-      .attr('y2', d.target.y);
-    group.select('.edge-label')
-      .attr('x', (d.source.x + d.target.x) / 2)
-      .attr('y', (d.source.y + d.target.y) / 2 - 4);
-  });
+  // Throttle DOM updates to animation frames
+  if (_tickFrame) return;
+  _tickFrame = requestAnimationFrame(() => {
+    _tickFrame = null;
 
-  nodeG.selectAll('.node-group')
-    .attr('transform', d => `translate(${d.x},${d.y})`);
+    // Update edge lines
+    linkG.selectAll('.edge-line')
+      .attr('x1', d => d.source.x)
+      .attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x)
+      .attr('y2', d => d.target.y);
+
+    // Update edge labels only when simulation is nearly done (saves CPU)
+    if (simulation.alpha() < 0.1) {
+      linkG.selectAll('.edge-label')
+        .attr('x', d => (d.source.x + d.target.x) / 2)
+        .attr('y', d => (d.source.y + d.target.y) / 2 - 4);
+    }
+
+    // Update nodes
+    nodeG.selectAll('.node-group')
+      .attr('transform', d => `translate(${d.x},${d.y})`);
+  });
 }
 
 // -----------------------------------------------------------------------
@@ -879,13 +896,17 @@ function updateStats() {
 // -----------------------------------------------------------------------
 // Window resize
 // -----------------------------------------------------------------------
+let _resizeTimer = null;
 window.addEventListener('resize', () => {
-  const container = document.getElementById('graph-container');
-  const width = container.clientWidth;
-  const height = container.clientHeight;
-  svg.attr('width', width).attr('height', height);
-  simulation.force('center', d3.forceCenter(width / 2, height / 2));
-  simulation.alpha(0.3).restart();
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(() => {
+    const container = document.getElementById('graph-container');
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    svg.attr('width', width).attr('height', height);
+    simulation.force('center', d3.forceCenter(width / 2, height / 2));
+    simulation.alpha(0.15).restart();
+  }, 200);
 });
 
 // -----------------------------------------------------------------------

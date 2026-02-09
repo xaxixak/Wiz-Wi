@@ -7,6 +7,7 @@ Pipeline passes:
   Pass 0: Workspace scanner + bridge (FREE) — discovers projects, creates top-level nodes
   Pass 1: Tree-sitter AST extraction (FREE) — creates File/Function/Class nodes
   Pass 2: Regex pattern matching (FREE) — detects endpoints, models, events, etc.
+  Pass 2b: Behavioral connections (FREE) — CALLS, READS_DB, EMITS_EVENT, etc.
   Pass 3: LLM semantic enrichment (PAID) — future
   Pass 4: Validation & scoring (FREE) — future
 """
@@ -26,6 +27,7 @@ from scanner import WorkspaceScanner, ScanResult
 from bridge import scan_result_to_graph
 from pipeline.pass1_treesitter import TreeSitterPass
 from pipeline.pass2_patterns import PatternPass
+from pipeline.pass2b_connections import ConnectionPass
 
 logger = logging.getLogger("workspace-intelligence")
 
@@ -101,14 +103,14 @@ def run_pipeline(
         output_path: Where to save the graph JSON (optional).
         max_depth: Max directory depth for scanner.
         passes: Which passes to run (default: all available).
-                Options: ["scan", "treesitter", "patterns"]
+                Options: ["scan", "treesitter", "patterns", "connections"]
 
     Returns:
         PipelineResult with the populated GraphStore.
     """
     workspace_path = Path(workspace_path).resolve()
     if passes is None:
-        passes = ["scan", "treesitter", "patterns"]
+        passes = ["scan", "treesitter", "patterns", "connections"]
 
     start = time.perf_counter()
     store = GraphStore()
@@ -184,6 +186,34 @@ def run_pipeline(
 
         passes_run.append("patterns")
         logger.info(f"  Processed {total_files} files, found {total_nodes} patterns")
+
+    # -- Pass 2b: Behavioral Connections --------------------------------
+    if "connections" in passes and scan_result.projects:
+        logger.info("Pass 2b: Behavioral connection extraction...")
+        conn_pass = ConnectionPass(store)
+
+        # Collect all source files with project context
+        all_files = []
+        for project in scan_result.projects:
+            language = PROJECT_LANGUAGE_MAP.get(project.project_type.value, "")
+            if not language:
+                continue
+            project_id = f"project:{workspace_path.name}:{project.name}"
+            source_files = _collect_source_files(project.path, language)
+            for file_path in source_files:
+                all_files.append((file_path, project_id, language))
+
+        try:
+            summary = conn_pass.process_all(all_files)
+            passes_run.append("connections")
+            logger.info(
+                f"  {summary['signals']} signals, "
+                f"{summary['edges_created']} edges created, "
+                f"{summary['nodes_created']} nodes created"
+            )
+        except Exception as e:
+            errors.append(f"Pass 2b error: {e}")
+            logger.error(f"  Pass 2b failed: {e}")
 
     # -- Save Output ---------------------------------------------------
     duration_ms = (time.perf_counter() - start) * 1000
@@ -283,8 +313,8 @@ def main():
     parser.add_argument(
         "--passes",
         nargs="+",
-        choices=["scan", "treesitter", "patterns"],
-        default=["scan", "treesitter", "patterns"],
+        choices=["scan", "treesitter", "patterns", "connections"],
+        default=["scan", "treesitter", "patterns", "connections"],
         help="Which passes to run (default: all)",
     )
     parser.add_argument(

@@ -132,6 +132,10 @@ def make_handler():
             elif path == "/api/browse":
                 dir_path = params.get("path", [self._default_browse_path()])[0]
                 self._send_json(_browse_directory(dir_path))
+            elif path == "/favicon.ico":
+                # Return a simple 1x1 transparent icon to suppress 404
+                self.send_response(204)
+                self.end_headers()
             else:
                 super().do_GET()
 
@@ -229,7 +233,8 @@ def main():
             shutil.copy2(f, dest)
 
     handler_class = make_handler()
-    server = http.server.HTTPServer(("127.0.0.1", args.port), handler_class)
+    # Use ThreadingHTTPServer so concurrent requests (loadGraphs + browse) don't block
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), handler_class)
 
     url = f"http://127.0.0.1:{args.port}"
     print(f"Workspace Intelligence Viewer")
