@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workspace Intelligence</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0d1117; color: #e6edf3;
+    min-height: 100vh;
+  }
+
+  /* Header */
+  header {
+    background: #161b22; border-bottom: 1px solid #30363d;
+    padding: 16px 24px; display: flex; align-items: center; gap: 12px;
+  }
+  header h1 { font-size: 20px; font-weight: 600; }
+  header .logo { font-size: 28px; }
+
+  /* Main layout */
+  .container {
+    max-width: 1000px; margin: 0 auto; padding: 24px;
+  }
+
+  /* Section cards */
+  .card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 20px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 16px; margin-bottom: 16px; color: #58a6ff; }
+
+  /* Existing graphs list */
+  .graph-list { list-style: none; }
+  .graph-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border: 1px solid #30363d; border-radius: 6px;
+    margin-bottom: 8px; cursor: pointer; transition: all 0.15s;
+  }
+  .graph-item:hover { border-color: #58a6ff; background: #1c2129; }
+  .graph-item .name { font-weight: 500; font-size: 15px; }
+  .graph-item .meta { color: #8b949e; font-size: 13px; }
+  .graph-item .btn-view {
+    background: #238636; color: #fff; border: none; border-radius: 6px;
+    padding: 6px 16px; cursor: pointer; font-size: 13px; font-weight: 500;
+  }
+  .graph-item .btn-view:hover { background: #2ea043; }
+
+  /* Folder browser */
+  .browser-path {
+    display: flex; gap: 8px; margin-bottom: 12px; align-items: center;
+  }
+  .browser-path input {
+    flex: 1; background: #0d1117; border: 1px solid #30363d; color: #e6edf3;
+    padding: 8px 12px; border-radius: 6px; font-size: 14px;
+  }
+  .browser-path button {
+    background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+    padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  .browser-path button:hover { border-color: #58a6ff; }
+
+  .file-list {
+    max-height: 350px; overflow-y: auto; border: 1px solid #30363d;
+    border-radius: 6px; background: #0d1117;
+  }
+  .file-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; cursor: pointer; border-bottom: 1px solid #21262d;
+    font-size: 14px; transition: background 0.1s;
+  }
+  .file-item:hover { background: #1c2129; }
+  .file-item:last-child { border-bottom: none; }
+  .file-item .icon { font-size: 16px; width: 20px; text-align: center; }
+  .file-item.selected { background: #1f3a5f; border-color: #58a6ff; }
+
+  /* Scan button */
+  .scan-area {
+    display: flex; align-items: center; gap: 12px; margin-top: 16px;
+  }
+  .btn-scan {
+    background: #58a6ff; color: #0d1117; border: none; border-radius: 6px;
+    padding: 10px 24px; cursor: pointer; font-size: 15px; font-weight: 600;
+    transition: background 0.15s;
+  }
+  .btn-scan:hover { background: #79c0ff; }
+  .btn-scan:disabled { background: #30363d; color: #8b949e; cursor: not-allowed; }
+  .selected-path {
+    color: #8b949e; font-size: 13px; flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* Status area */
+  .status {
+    margin-top: 16px; padding: 12px 16px; border-radius: 6px;
+    font-size: 13px; line-height: 1.5; display: none;
+  }
+  .status.loading { display: block; background: #1c2129; border: 1px solid #30363d; color: #8b949e; }
+  .status.success { display: block; background: #0d2818; border: 1px solid #238636; color: #3fb950; }
+  .status.error   { display: block; background: #2d1117; border: 1px solid #da3633; color: #f85149; }
+
+  /* Empty state */
+  .empty { text-align: center; color: #8b949e; padding: 32px; font-size: 14px; }
+
+  /* Spinner */
+  .spinner {
+    display: inline-block; width: 16px; height: 16px;
+    border: 2px solid #30363d; border-top-color: #58a6ff;
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+    vertical-align: middle; margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Instructions */
+  .instructions {
+    background: #1c2129; border: 1px solid #30363d; border-radius: 6px;
+    padding: 16px; margin-top: 12px; font-size: 13px; color: #8b949e; line-height: 1.6;
+  }
+  .instructions strong { color: #e6edf3; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">&#129504;</span>
+  <h1>Workspace Intelligence</h1>
+</header>
+
+<div class="container">
+
+  <!-- Existing graphs -->
+  <div class="card" id="existing-card">
+    <h2>&#128202; Previously Scanned Projects</h2>
+    <ul class="graph-list" id="graph-list">
+      <li class="empty">Loading...</li>
+    </ul>
+  </div>
+
+  <!-- Scan new folder -->
+  <div class="card">
+    <h2>&#128269; Scan a New Folder</h2>
+
+    <div class="instructions">
+      <strong>How it works:</strong> Browse to any code project folder below, then click
+      <strong>Scan This Folder</strong>. The tool will analyze all the code and create
+      a visual map of how everything connects.
+    </div>
+
+    <div class="browser-path" style="margin-top: 16px;">
+      <input type="text" id="path-input" placeholder="Type a folder path or browse below...">
+      <button onclick="goToPath()">Go</button>
+    </div>
+
+    <div id="current-path" style="color: #8b949e; font-size: 12px; margin-bottom: 8px;"></div>
+
+    <div class="file-list" id="file-list">
+      <div class="empty">Loading folders...</div>
+    </div>
+
+    <div class="scan-area">
+      <button class="btn-scan" id="btn-scan" onclick="scanFolder()" disabled>
+        Scan This Folder
+      </button>
+      <span class="selected-path" id="selected-display">Select a folder above</span>
+    </div>
+
+    <div class="status" id="status"></div>
+  </div>
+
+</div>
+
+<script>
+let selectedFolder = null;
+
+// Load existing graphs on page load
+async function loadGraphs() {
+  try {
+    const resp = await fetch('/api/graphs');
+    const graphs = await resp.json();
+    const list = document.getElementById('graph-list');
+
+    if (graphs.length === 0) {
+      list.innerHTML = '<li class="empty">No graphs yet. Scan a folder below to get started!</li>';
+      return;
+    }
+
+    list.innerHTML = '';
+    for (const g of graphs) {
+      const li = document.createElement('li');
+      li.className = 'graph-item';
+      const sizeKB = Math.round(g.size / 1024);
+      li.innerHTML = `
+        <div>
+          <div class="name">&#128200; ${g.name}</div>
+          <div class="meta">${sizeKB} KB</div>
+        </div>
+        <button class="btn-view" onclick="viewGraph('${g.path.replace(/\\/g, '\\\\')}')">
+          View Graph
+        </button>
+      `;
+      list.appendChild(li);
+    }
+  } catch (e) {
+    document.getElementById('graph-list').innerHTML =
+      '<li class="empty">Error loading graphs</li>';
+  }
+}
+
+// Browse directories
+async function browse(path) {
+  try {
+    const url = path ? `/api/browse?path=${encodeURIComponent(path)}` : '/api/browse';
+    const resp = await fetch(url);
+    const data = await resp.json();
+
+    if (data.error) {
+      document.getElementById('file-list').innerHTML =
+        `<div class="empty">${data.error}</div>`;
+      return;
+    }
+
+    document.getElementById('path-input').value = data.current;
+    document.getElementById('current-path').textContent = data.current;
+
+    const list = document.getElementById('file-list');
+    list.innerHTML = '';
+
+    for (const item of data.items) {
+      const div = document.createElement('div');
+      div.className = 'file-item';
+
+      let icon = '';
+      if (item.type === 'parent') icon = '&#11014;';
+      else if (item.type === 'folder') icon = '&#128193;';
+      else icon = '&#128196;';
+
+      div.innerHTML = `<span class="icon">${icon}</span><span>${item.name}</span>`;
+
+      if (item.type === 'folder' || item.type === 'parent') {
+        div.onclick = () => browse(item.path);
+        div.ondblclick = () => {
+          selectFolder(item.path, item.name);
+        };
+      }
+
+      list.appendChild(div);
+    }
+
+    // Auto-select current folder for scanning
+    selectFolder(data.current, data.current.split('\\').pop().split('/').pop());
+
+  } catch (e) {
+    document.getElementById('file-list').innerHTML =
+      `<div class="empty">Error browsing: ${e.message}</div>`;
+  }
+}
+
+function selectFolder(path, name) {
+  selectedFolder = path;
+  document.getElementById('btn-scan').disabled = false;
+  document.getElementById('selected-display').textContent = path;
+}
+
+function goToPath() {
+  const path = document.getElementById('path-input').value.trim();
+  if (path) browse(path);
+}
+
+// Handle Enter key in path input
+document.getElementById('path-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') goToPath();
+});
+
+// Scan folder
+async function scanFolder() {
+  if (!selectedFolder) return;
+
+  const btn = document.getElementById('btn-scan');
+  const status = document.getElementById('status');
+
+  btn.disabled = true;
+  btn.textContent = 'Scanning...';
+  status.className = 'status loading';
+  status.innerHTML = '<span class="spinner"></span> Scanning folder... This may take a few seconds.';
+
+  try {
+    const resp = await fetch('/api/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder: selectedFolder }),
+    });
+    const result = await resp.json();
+
+    if (result.success) {
+      status.className = 'status success';
+      status.innerHTML = `Done! Graph saved.<br><pre style="margin-top:8px;font-size:12px;white-space:pre-wrap;">${result.output || ''}</pre>`;
+
+      // Reload graphs list
+      await loadGraphs();
+
+      // Auto-open viewer after 1 second
+      setTimeout(() => {
+        viewGraph(result.graph_path);
+      }, 1500);
+    } else {
+      status.className = 'status error';
+      status.textContent = result.error || 'Scan failed';
+    }
+  } catch (e) {
+    status.className = 'status error';
+    status.textContent = 'Error: ' + e.message;
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Scan This Folder';
+}
+
+// View a graph
+function viewGraph(graphPath) {
+  window.location.href = `/view?graph=${encodeURIComponent(graphPath)}`;
+}
+
+// Init
+loadGraphs();
+browse();
+</script>
+
+</body>
+</html>
