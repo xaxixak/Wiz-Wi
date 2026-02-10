@@ -44,6 +44,12 @@ _active_watchers = {}  # folder_path -> GraphWatcher instance
 _scans_lock = threading.Lock()
 _watchers_lock = threading.Lock()
 
+# ---------------------------------------------------------------------------
+# Folder Picker State (for async native dialog)
+# ---------------------------------------------------------------------------
+_picker_result = None  # Stores result from tkinter folder picker
+_picker_lock = threading.Lock()
+
 
 def broadcast_sse(event_type: str, data: dict) -> None:
     """Send an event to all connected SSE clients."""
@@ -284,6 +290,10 @@ def make_handler():
                 self._send_json(_browse_directory(dir_path))
             elif path == "/api/events":
                 self._serve_sse()
+            elif path == "/api/pick-folder":
+                self._start_folder_picker()
+            elif path == "/api/pick-folder-result":
+                self._get_picker_result()
             elif path == "/favicon.ico":
                 # Return a simple 1x1 transparent icon to suppress 404
                 self.send_response(204)
@@ -420,6 +430,58 @@ def make_handler():
                 self._send_json(data)
             except Exception as e:
                 self._send_error(500, f"Error reading graph: {e}")
+
+        def _start_folder_picker(self):
+            """Launch native Windows folder picker in background thread."""
+            global _picker_result
+
+            def show_picker():
+                global _picker_result
+                try:
+                    import tkinter as tk
+                    from tkinter import filedialog
+
+                    root = tk.Tk()
+                    root.withdraw()
+                    root.attributes('-topmost', True)
+
+                    folder_path = filedialog.askdirectory(
+                        title="Select Folder to Scan",
+                        mustexist=True
+                    )
+
+                    root.destroy()
+
+                    with _picker_lock:
+                        if folder_path:
+                            _picker_result = {"success": True, "path": folder_path}
+                        else:
+                            _picker_result = {"success": False, "cancelled": True}
+
+                except Exception as e:
+                    with _picker_lock:
+                        _picker_result = {"success": False, "error": str(e)}
+
+            # Reset result and start picker in background
+            with _picker_lock:
+                _picker_result = None
+
+            picker_thread = threading.Thread(target=show_picker, daemon=True)
+            picker_thread.start()
+
+            self._send_json({"status": "started"})
+
+        def _get_picker_result(self):
+            """Poll for folder picker result."""
+            global _picker_result
+
+            with _picker_lock:
+                if _picker_result is None:
+                    self._send_json({"status": "waiting"})
+                else:
+                    result = _picker_result.copy()
+                    _picker_result = None  # Clear result
+                    self._send_json(result)
 
         def _serve_sse(self):
             """Handle SSE connection — keeps the connection open and streams events."""

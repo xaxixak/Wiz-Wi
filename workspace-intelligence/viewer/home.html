@@ -522,9 +522,17 @@
 
     <div class="instructions">
       <strong>How to select a folder:</strong><br>
+      💡 <strong>Windows Picker</strong> - Click "Open Folder..." for native Windows dialog<br>
       💡 <strong>Quick Select</strong> - Click a button below for common folders<br>
-      💡 <strong>Browse</strong> - Click folders below to navigate, currently shown folder is selected<br>
       💡 <strong>Type path</strong> - Paste the full path and click Go
+    </div>
+
+    <!-- Native Windows Folder Picker -->
+    <div style="margin-top: 16px; padding: 12px; background: #238636; border-radius: 6px;">
+      <button class="btn-browse-folder" onclick="openNativePicker()" style="background: #fff; color: #0d1117; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 14px;">
+        📂 Open Folder...
+      </button>
+      <span id="picker-status" style="margin-left: 12px; color: #fff; font-size: 13px;">Click to open Windows folder picker</span>
     </div>
 
     <!-- Quick Select -->
@@ -740,6 +748,62 @@ function selectFolder(path, name) {
 function goToPath() {
   const path = document.getElementById('path-input').value.trim();
   if (path) browse(path);
+}
+
+// Native Windows folder picker (async with polling)
+async function openNativePicker() {
+  const statusEl = document.getElementById('picker-status');
+
+  try {
+    statusEl.textContent = 'Opening Windows folder picker...';
+    statusEl.style.color = '#fff';
+
+    // Start the picker (opens native dialog in background thread)
+    const startResp = await fetch('/api/pick-folder');
+    const startResult = await startResp.json();
+
+    if (startResult.status !== 'started') {
+      statusEl.textContent = '❌ Failed to start picker';
+      return;
+    }
+
+    statusEl.textContent = 'Waiting for folder selection...';
+
+    // Poll for result every 500ms
+    let attempts = 0;
+    while (attempts < 120) { // 60 second timeout
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      const resultResp = await fetch('/api/pick-folder-result');
+      const result = await resultResp.json();
+
+      if (result.status === 'waiting') {
+        attempts++;
+        continue;
+      }
+
+      if (result.success && result.path) {
+        const folderName = result.path.split(/[\\\/]/).pop();
+        statusEl.textContent = `✓ Selected: ${folderName}`;
+
+        // Browse to the selected folder
+        await browse(result.path);
+        return;
+      } else if (result.cancelled) {
+        statusEl.textContent = 'Cancelled';
+        return;
+      } else if (result.error) {
+        statusEl.textContent = '❌ Error: ' + result.error;
+        return;
+      }
+    }
+
+    statusEl.textContent = '❌ Timeout waiting for selection';
+
+  } catch (e) {
+    console.error('Folder picker error:', e);
+    statusEl.textContent = '❌ Error: ' + e.message;
+  }
 }
 
 async function quickSelect(relativePath) {
