@@ -521,20 +521,15 @@
     <h2>&#128269; Scan a New Folder</h2>
 
     <div class="instructions">
-      <strong>How it works:</strong> Click "Browse..." for native Windows folder picker, use Quick Select for common folders, or paste path below. Then click <strong>Scan This Folder</strong>.
-    </div>
-
-    <!-- Native Folder Picker -->
-    <div style="margin-top: 16px; padding: 16px; background: #1c2129; border: 1px solid #30363d; border-radius: 6px;">
-      <button class="btn-browse-folder" onclick="openFolderPicker()">
-        📂 Browse for Folder...
-      </button>
-      <span id="picker-status" style="margin-left: 12px; font-size: 13px; color: #8b949e;">Native Windows folder picker - just click and select!</span>
+      <strong>How to select a folder:</strong><br>
+      💡 <strong>Quick Select</strong> - Click a button below for common folders<br>
+      💡 <strong>Browse</strong> - Click folders below to navigate, currently shown folder is selected<br>
+      💡 <strong>Type path</strong> - Paste the full path and click Go
     </div>
 
     <!-- Quick Select -->
-    <div class="quick-select" style="margin-top: 12px;">
-      <label style="font-size: 12px; color: #8b949e; margin-bottom: 6px; display: block;">Or Quick Select:</label>
+    <div class="quick-select" style="margin-top: 16px;">
+      <label style="font-size: 13px; font-weight: 500; margin-bottom: 8px; display: block;">🚀 Quick Select Common Folders:</label>
       <div style="display: flex; gap: 8px; flex-wrap: wrap;">
         <button class="quick-btn" onclick="quickSelect('../test-shop')">📁 test-shop</button>
         <button class="quick-btn" onclick="quickSelect('../oracle-v2')">📁 oracle-v2</button>
@@ -543,12 +538,14 @@
       </div>
     </div>
 
-    <div class="browser-path" style="margin-top: 10px;">
+    <div class="browser-path" style="margin-top: 16px;">
       <input type="text" id="path-input" placeholder="Or paste path (e.g., D:\Projects\my-app)">
       <button onclick="goToPath()">Go</button>
     </div>
 
-    <div id="current-path" style="color: #8b949e; font-size: 12px; margin-bottom: 8px;"></div>
+    <div id="current-path" style="color: #58a6ff; font-size: 13px; margin: 8px 0; font-weight: 500;">
+      Current folder: (loading...)
+    </div>
 
     <div class="file-list" id="file-list">
       <div class="empty">Loading folders...</div>
@@ -699,7 +696,7 @@ async function browse(path) {
     }
 
     document.getElementById('path-input').value = data.current;
-    document.getElementById('current-path').textContent = data.current;
+    document.getElementById('current-path').textContent = `Current folder: ${data.current} ✓ (will be scanned)`;
 
     const list = document.getElementById('file-list');
     list.innerHTML = '';
@@ -743,40 +740,6 @@ function selectFolder(path, name) {
 function goToPath() {
   const path = document.getElementById('path-input').value.trim();
   if (path) browse(path);
-}
-
-// Native Windows folder picker (uses Python tkinter on backend)
-async function openFolderPicker() {
-  const statusEl = document.getElementById('picker-status');
-
-  try {
-    statusEl.textContent = 'Opening folder picker...';
-    statusEl.style.color = '#58a6ff';
-
-    // Call backend endpoint that shows native Windows dialog
-    const resp = await fetch('/api/pick-folder');
-    const result = await resp.json();
-
-    if (result.success && result.path) {
-      const folderName = result.path.split(/[\\\/]/).pop();
-      statusEl.textContent = `✓ Selected: ${folderName}`;
-      statusEl.style.color = '#3fb950';
-
-      // Browse to the folder automatically
-      await browse(result.path);
-    } else if (result.message) {
-      statusEl.textContent = result.message;
-      statusEl.style.color = '#8b949e';
-    } else if (result.error) {
-      statusEl.textContent = '❌ Error: ' + result.error;
-      statusEl.style.color = '#f85149';
-    }
-
-  } catch (e) {
-    console.error('Folder picker error:', e);
-    statusEl.textContent = '❌ Error: ' + e.message;
-    statusEl.style.color = '#f85149';
-  }
 }
 
 async function quickSelect(relativePath) {
