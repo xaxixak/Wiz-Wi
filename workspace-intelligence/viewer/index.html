@@ -237,6 +237,38 @@ body {
   stroke-width: 3 !important;
 }
 
+/* --- Live update node highlights --- */
+@keyframes node-added-pulse {
+  0% { opacity: 0; transform: scale(0.5); }
+  50% { transform: scale(1.2); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes node-modified-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes node-removed-fade {
+  0% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.5); }
+}
+
+.node-added .node-shape {
+  animation: node-added-pulse 0.6s ease-out;
+  filter: drop-shadow(0 0 8px #4ecca3);
+}
+
+.node-modified .node-shape {
+  animation: node-modified-pulse 1s ease-in-out 3;
+  filter: drop-shadow(0 0 8px #f9ca24);
+}
+
+.node-removed .node-shape {
+  animation: node-removed-fade 0.5s ease-out forwards;
+  filter: drop-shadow(0 0 8px #e94560);
+}
+
 /* --- Scrollbar --- */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -749,6 +781,24 @@ function updateGraph() {
   // Update selected highlight
   nodeMerged.classed('node-selected', d => d.id === selectedNodeId);
 
+  // Apply live update highlight classes
+  nodeMerged
+    .classed('node-added', d => d._highlightClass === 'node-added')
+    .classed('node-modified', d => d._highlightClass === 'node-modified')
+    .classed('node-removed', d => d._highlightClass === 'node-removed');
+
+  // Remove highlight classes after animation completes
+  if (_liveUpdateEnabled) {
+    setTimeout(() => {
+      nodeG.selectAll('.node-group')
+        .classed('node-added', false)
+        .classed('node-modified', false)
+        .classed('node-removed', false);
+      // Clear highlight class from data
+      nodes.forEach(n => n._highlightClass = null);
+    }, 3000); // Clear after 3 seconds
+  }
+
   // Restart simulation — lower alpha = settles faster = less CPU
   simulation.nodes(nodes);
   simulation.force('link').links(links);
@@ -919,6 +969,7 @@ window.addEventListener('resize', () => {
 let _liveUpdateEnabled = false;
 let _eventSource = null;
 let _updateBanner = null;
+let _highlightData = null; // Track which nodes to highlight
 
 function initLiveUpdates() {
   _eventSource = new EventSource('/api/events');
@@ -928,6 +979,14 @@ function initLiveUpdates() {
     _liveUpdateEnabled = true;
     showWatchIndicator(true); // Show watch indicator when updates start coming
     showUpdateBanner(data);
+
+    // Store highlight info for reloadGraph to use
+    _highlightData = {
+      added: data.nodes_added || 0,
+      removed: data.nodes_removed || 0,
+      affected: data.nodes_affected || []
+    };
+
     reloadGraph();
   });
   _eventSource.onerror = () => {
@@ -1006,6 +1065,11 @@ async function reloadGraph() {
     if (!resp.ok) return;
     const newData = await resp.json();
 
+    // Track which nodes are new (for highlighting)
+    const oldNodeIds = new Set(rawData.nodes.map(n => n.id));
+    const newNodeIds = new Set(newData.nodes.map(n => n.id));
+    const addedNodeIds = new Set([...newNodeIds].filter(id => !oldNodeIds.has(id)));
+
     // Preserve positions from existing nodes
     const posMap = {};
     for (const n of rawData.nodes) {
@@ -1014,9 +1078,20 @@ async function reloadGraph() {
 
     rawData = newData;
 
-    // Normalize tiers
+    // Normalize tiers and mark highlight status
     for (const node of rawData.nodes) {
       if (!node.tier) node.tier = NODE_TIER[node.type] || 'micro';
+
+      // Mark nodes for highlighting
+      node._highlightClass = null;
+      if (_highlightData) {
+        if (addedNodeIds.has(node.id)) {
+          node._highlightClass = 'node-added';
+        } else if (_highlightData.affected && _highlightData.affected.includes(node.id)) {
+          node._highlightClass = 'node-modified';
+        }
+      }
+
       // Restore position if node existed before (smooth transition)
       if (posMap[node.id]) {
         node.x = posMap[node.id].x;
@@ -1025,6 +1100,9 @@ async function reloadGraph() {
         node.vy = posMap[node.id].vy;
       }
     }
+
+    // Clear highlight data after applying
+    _highlightData = null;
 
     // Update filters for any new types
     const nodeTypes = new Set(rawData.nodes.map(n => n.type));
