@@ -284,8 +284,6 @@ def make_handler():
                 self._send_json(_browse_directory(dir_path))
             elif path == "/api/events":
                 self._serve_sse()
-            elif path == "/api/pick-folder":
-                self._serve_folder_picker()
             elif path == "/favicon.ico":
                 # Return a simple 1x1 transparent icon to suppress 404
                 self.send_response(204)
@@ -422,36 +420,6 @@ def make_handler():
                 self._send_json(data)
             except Exception as e:
                 self._send_error(500, f"Error reading graph: {e}")
-
-        def _serve_folder_picker(self):
-            """Show native Windows folder picker using tkinter."""
-            try:
-                import tkinter as tk
-                from tkinter import filedialog
-
-                # Create a hidden root window
-                root = tk.Tk()
-                root.withdraw()
-                root.attributes('-topmost', True)
-
-                # Show folder picker dialog
-                folder_path = filedialog.askdirectory(
-                    title="Select Folder to Scan",
-                    mustexist=True
-                )
-
-                # Cleanup
-                root.destroy()
-
-                if folder_path:
-                    self._send_json({"success": True, "path": folder_path})
-                else:
-                    self._send_json({"success": False, "message": "No folder selected"})
-
-            except ImportError:
-                self._send_json({"error": "tkinter not available (should come with Python)"})
-            except Exception as e:
-                self._send_json({"error": str(e)})
 
         def _serve_sse(self):
             """Handle SSE connection — keeps the connection open and streams events."""
