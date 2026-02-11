@@ -338,7 +338,10 @@ body {
   margin-left: 12px;
 }
 
-.runtime-indicator.active { display: flex; }
+.runtime-indicator.active {
+  opacity: 1 !important;
+  font-weight: 700;
+}
 
 @keyframes runtime-dot-pulse {
   0%, 100% { opacity: 0.3; }
@@ -532,24 +535,40 @@ body {
 
   <!-- Toolbar -->
   <div id="toolbar">
-    <a href="/" style="color:var(--accent);text-decoration:none;font-size:13px;padding:4px 10px;border:1px solid var(--border);border-radius:4px;">&larr; Home</a>
+    <button onclick="showScanDialog()" style="color:var(--accent);background:transparent;border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer;font-size:13px;">📁 Scan Folder</button>
     <h1>Workspace Intelligence</h1>
     <input type="text" id="search-box" placeholder="Search nodes by name..." />
     <span class="toolbar-stats" id="stats-display">Loading...</span>
-    <div id="watch-status" style="display:none; margin-left: auto; gap: 10px; align-items: center;">
-      <span style="color:#3fb950; font-weight: 600; font-size: 14px;">● LIVE</span>
+
+    <!-- Status & Mode Controls (always visible) -->
+    <div style="display:flex; gap:12px; align-items:center; margin-left:auto; padding:4px 12px; background:var(--bg-secondary); border-radius:6px; border:1px solid var(--border);">
+      <!-- Status Indicators -->
+      <div style="display:flex; gap:8px; align-items:center; padding-right:8px; border-right:1px solid var(--border);">
+        <div id="watch-status-compact" onclick="toggleWatchMode()" style="display:flex; gap:6px; align-items:center; opacity:0.3; cursor:pointer; padding:4px 8px; border-radius:4px; border:1px solid transparent;" title="Click to toggle LIVE mode (file watching)">
+          <span style="color:#3fb950; font-weight:600; font-size:14px;">●</span>
+          <span style="font-size:12px; font-weight:600;">LIVE</span>
+        </div>
+        <div id="runtime-status" class="runtime-indicator" style="opacity:0.3;" title="RUNTIME mode shows live execution activity from your app">
+          <span class="runtime-dot"></span>
+          <span style="font-size:12px;">RUNTIME</span>
+          <span id="runtime-event-count" style="color:#e0e0e0; font-size:11px;">0</span>
+        </div>
+      </div>
+
+      <!-- View Mode Buttons -->
+      <div class="layer-toggle" style="display:flex;gap:4px;">
+        <button class="layer-btn active" data-layer="all" onclick="setViewLayer('all')" title="Show all nodes and edges">All</button>
+        <button class="layer-btn" data-layer="structure" onclick="setViewLayer('structure')" title="Show only folders, files, and CONTAINS edges">Structure</button>
+        <button class="layer-btn" data-layer="dependency" onclick="setViewLayer('dependency')" title="Show files, functions, and IMPORTS/CALLS edges">Dependency</button>
+        <button class="layer-btn" data-layer="runtime" onclick="setViewLayer('runtime')" title="Show runtime execution paths and events">Runtime</button>
+      </div>
+
+      <!-- Help Button -->
+      <button onclick="toggleModeHelp()" style="background:transparent; border:1px solid var(--border); border-radius:4px; padding:4px 8px; color:var(--text-muted); cursor:pointer; font-size:14px;" title="Show mode explanations">?</button>
+    </div>
+
+    <div id="watch-status-full" style="display:none; margin-left: 12px;">
       <button onclick="stopWatcher()" class="btn-stop-watch" style="background: #da3633; color: #fff; border: none; border-radius: 4px; padding: 4px 12px; cursor: pointer; font-size: 12px;">Stop Watching</button>
-    </div>
-    <div id="runtime-status" class="runtime-indicator">
-      <span class="runtime-dot"></span>
-      <span>RUNTIME</span>
-      <span id="runtime-event-count" style="color:#e0e0e0">0 events</span>
-    </div>
-    <div class="layer-toggle" style="display:flex;gap:4px;margin-left:12px">
-      <button class="layer-btn active" data-layer="all" onclick="setViewLayer('all')">All</button>
-      <button class="layer-btn" data-layer="structure" onclick="setViewLayer('structure')">Structure</button>
-      <button class="layer-btn" data-layer="dependency" onclick="setViewLayer('dependency')">Dependency</button>
-      <button class="layer-btn" data-layer="runtime" onclick="setViewLayer('runtime')">Runtime</button>
     </div>
     <div id="focal-indicator" style="display:none"></div>
   </div>
@@ -610,6 +629,105 @@ body {
   <!-- Graph -->
   <div id="graph-container">
     <div class="tooltip" id="tooltip"></div>
+  </div>
+</div>
+
+<!-- Scan Dialog Modal -->
+<div id="scan-dialog" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:2000; align-items:center; justify-content:center;">
+  <div style="background:var(--bg-secondary); border:1px solid var(--border); border-radius:8px; padding:24px; width:650px; max-width:90%;">
+    <h2 style="margin-bottom:8px; font-size:18px;">Scan Your Project Folder</h2>
+    <p style="margin-bottom:16px; font-size:13px; color:var(--text-muted); line-height:1.5;">
+      Choose the folder containing <strong>your code</strong> (e.g., your React app, Node.js project) to analyze and visualize its structure.
+    </p>
+
+    <div style="margin-bottom:20px; background:var(--bg-panel); padding:16px; border-radius:6px; border:1px solid var(--border);">
+      <div style="font-size:13px; font-weight:600; margin-bottom:12px; color:var(--text-primary);">Quick Select (Click to Scan):</div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button onclick="setQuickFolder('d:\\\\Work\\\\Ai Dev\\\\MOB\\\\Smart RPL\\\\test-shop')" style="padding:12px 20px; background:var(--accent); border:none; border-radius:6px; color:white; cursor:pointer; font-size:14px; font-weight:600; flex:1; min-width:180px;">📦 test-shop</button>
+        <button onclick="setQuickFolder('d:\\\\Work\\\\Ai Dev\\\\MOB\\\\Smart RPL\\\\workspace-intelligence')" style="padding:12px 20px; background:var(--accent); border:none; border-radius:6px; color:white; cursor:pointer; font-size:14px; font-weight:600; flex:1; min-width:180px;">🧠 workspace-intelligence</button>
+      </div>
+    </div>
+
+    <div style="margin-bottom:16px; text-align:center; color:var(--text-muted); font-size:12px;">— OR —</div>
+
+    <div style="margin-bottom:16px;">
+      <label style="display:block; margin-bottom:6px; font-size:13px; color:var(--text-muted);">Enter Custom Folder Path:</label>
+      <div style="display:flex; gap:10px;">
+        <input type="text" id="scan-folder-input" placeholder="e.g., D:\My Projects\react-app" style="flex:1; padding:12px; background:var(--bg-primary); border:1px solid var(--border); border-radius:4px; color:var(--text-primary); font-size:14px;" />
+        <button onclick="openFolderPicker()" style="padding:12px 20px; background:var(--bg-panel); border:1px solid var(--border); border-radius:4px; color:var(--text-primary); cursor:pointer; white-space:nowrap;">📁 Browse...</button>
+      </div>
+      <div style="margin-top:6px; font-size:11px; color:var(--text-muted);">💡 Tip: Use Browse button or copy folder path from Windows Explorer address bar</div>
+    </div>
+
+    <!-- Watch Mode Option -->
+    <div style="margin-bottom:16px;">
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer; padding:10px; background:var(--bg-panel); border-radius:4px; border:1px solid var(--border);">
+        <input type="checkbox" id="enable-watch-mode" style="accent-color:#3fb950;" />
+        <div>
+          <div style="font-size:13px; font-weight:600; color:#3fb950;">● Enable LIVE Mode</div>
+          <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Automatically update graph when files change</div>
+        </div>
+      </label>
+    </div>
+
+    <div id="scan-status" style="margin-bottom:16px; font-size:13px; min-height:20px;"></div>
+
+    <div style="display:flex; gap:10px; justify-content:flex-end;">
+      <button onclick="hideScanDialog()" style="padding:8px 16px; background:var(--bg-panel); border:1px solid var(--border); border-radius:4px; color:var(--text-primary); cursor:pointer;">Cancel</button>
+      <button onclick="startScan()" style="padding:8px 16px; background:var(--accent); border:none; border-radius:4px; color:white; cursor:pointer; font-weight:600;">Scan</button>
+    </div>
+  </div>
+</div>
+
+<!-- Mode Help Panel -->
+<div id="mode-help-panel" style="display:none; position:fixed; top:80px; right:20px; width:400px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:8px; padding:20px; box-shadow:0 8px 32px rgba(0,0,0,0.4); z-index:9999;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+    <h3 style="margin:0; font-size:16px; color:var(--text-primary);">Viewer Modes</h3>
+    <button onclick="toggleModeHelp()" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:20px;">×</button>
+  </div>
+
+  <div style="display:flex; flex-direction:column; gap:16px;">
+    <!-- LIVE Mode -->
+    <div style="padding:12px; background:var(--bg-primary); border-radius:6px; border-left:3px solid #3fb950;">
+      <div style="font-weight:600; color:#3fb950; margin-bottom:6px;">● LIVE Mode</div>
+      <div style="font-size:12px; color:var(--text-muted); line-height:1.5;">
+        Watches your project folder for file changes. When you edit, create, or delete files, the graph automatically updates in real-time.
+        <div style="margin-top:6px; color:var(--accent);">📍 Click the indicator to toggle on/off</div>
+      </div>
+    </div>
+
+    <!-- RUNTIME Mode -->
+    <div style="padding:12px; background:var(--bg-primary); border-radius:6px; border-left:3px solid #ff6b6b;">
+      <div style="font-weight:600; color:#ff6b6b; margin-bottom:6px;">● RUNTIME Mode</div>
+      <div style="font-size:12px; color:var(--text-muted); line-height:1.5;">
+        Shows live execution activity from your running app. When your code makes HTTP requests or emits events, nodes light up with ripple animations.
+        <div style="margin-top:6px; color:var(--text-muted);">📍 Requires app probe integration</div>
+      </div>
+    </div>
+
+    <!-- View Filters -->
+    <div style="border-top:1px solid var(--border); padding-top:16px;">
+      <div style="font-weight:600; color:var(--text-primary); margin-bottom:12px;">View Filters</div>
+
+      <div style="display:flex; flex-direction:column; gap:10px; font-size:12px;">
+        <div>
+          <span style="font-weight:600; color:var(--accent);">All:</span>
+          <span style="color:var(--text-muted);"> Show everything (folders, files, functions, imports, calls)</span>
+        </div>
+        <div>
+          <span style="font-weight:600; color:#4A90D9;">Structure:</span>
+          <span style="color:var(--text-muted);"> Show only folder hierarchy and files</span>
+        </div>
+        <div>
+          <span style="font-weight:600; color:#50C878;">Dependency:</span>
+          <span style="color:var(--text-muted);"> Show files, functions, and how they call each other</span>
+        </div>
+        <div>
+          <span style="font-weight:600; color:#FF8C42;">Runtime:</span>
+          <span style="color:var(--text-muted);"> Show runtime execution paths and event flows</span>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -737,6 +855,11 @@ async function loadData() {
   updateGraph();
   updateStats();
   checkNodeLimit();
+
+  // Check if watch mode was active
+  if (sessionStorage.getItem('watch_active') === 'true') {
+    showWatchIndicator(true);
+  }
 }
 
 // -----------------------------------------------------------------------
@@ -1257,7 +1380,7 @@ let _highlightData = null; // Track which nodes to highlight
 
 function initLiveUpdates() {
   _eventSource = new EventSource('/api/events');
-  _eventSource.addEventListener('graph-updated', (e) => {
+  _eventSource.addEventListener('graph-update', (e) => {
     const data = JSON.parse(e.data);
     console.log('[LIVE] Graph updated:', data);
     _liveUpdateEnabled = true;
@@ -1282,9 +1405,16 @@ function initLiveUpdates() {
 }
 
 function showWatchIndicator(visible) {
-  const indicator = document.getElementById('watch-status');
-  if (indicator) {
-    indicator.style.display = visible ? 'flex' : 'none';
+  const compactIndicator = document.getElementById('watch-status-compact');
+  const fullIndicator = document.getElementById('watch-status-full');
+
+  if (compactIndicator) {
+    compactIndicator.style.opacity = visible ? '1' : '0.3';
+    compactIndicator.style.fontWeight = visible ? '700' : '400';
+  }
+
+  if (fullIndicator) {
+    fullIndicator.style.display = visible ? 'flex' : 'none';
   }
 }
 
@@ -1385,6 +1515,13 @@ async function reloadGraph() {
       }
     }
 
+    // Collect IDs of changed nodes for auto-navigate
+    const changedNodeIds = [];
+    if (_highlightData) {
+      if (_highlightData.affected) changedNodeIds.push(..._highlightData.affected);
+      for (const id of addedNodeIds) changedNodeIds.push(id);
+    }
+
     // Clear highlight data after applying
     _highlightData = null;
 
@@ -1397,6 +1534,22 @@ async function reloadGraph() {
     buildTreeView();
     updateGraph();
     updateStats();
+
+    // Auto-navigate: pan to the first changed/added node
+    if (changedNodeIds.length > 0) {
+      // Find a File node first (most meaningful), fall back to any changed node
+      let targetNode = null;
+      for (const id of changedNodeIds) {
+        const n = rawData.nodes.find(nd => nd.id === id);
+        if (n && n.type === 'File') { targetNode = n; break; }
+      }
+      if (!targetNode) {
+        targetNode = rawData.nodes.find(n => changedNodeIds.includes(n.id));
+      }
+      if (targetNode) {
+        setTimeout(() => panToNode(targetNode), 400);
+      }
+    }
   } catch (err) {
     console.error('[LIVE] Reload failed:', err);
   }
@@ -2095,6 +2248,136 @@ function checkNodeLimit() {
     warning.style.display = 'block';
   } else {
     warning.style.display = 'none';
+  }
+}
+
+// -----------------------------------------------------------------------
+// Scan Dialog
+// -----------------------------------------------------------------------
+function showScanDialog() {
+  document.getElementById('scan-dialog').style.display = 'flex';
+}
+
+function hideScanDialog() {
+  document.getElementById('scan-dialog').style.display = 'none';
+  document.getElementById('scan-status').textContent = '';
+}
+
+async function openFolderPicker() {
+  const statusEl = document.getElementById('scan-status');
+  statusEl.textContent = '📂 Opening folder picker...';
+  statusEl.style.color = '#4ecca3';
+
+  try {
+    const resp = await fetch('/api/pick-folder');
+    const data = await resp.json();
+
+    if (data.folder) {
+      document.getElementById('scan-folder-input').value = data.folder;
+      statusEl.textContent = `✅ Selected: ${data.folder}`;
+      statusEl.style.color = '#4ecca3';
+    } else if (data.error) {
+      statusEl.textContent = `❌ ${data.error}`;
+      statusEl.style.color = '#e94560';
+    }
+  } catch (err) {
+    statusEl.textContent = `❌ Error: ${err.message}`;
+    statusEl.style.color = '#e94560';
+  }
+}
+
+async function startScan() {
+  const folderPath = document.getElementById('scan-folder-input').value.trim();
+  if (!folderPath) {
+    alert('Please enter a folder path');
+    return;
+  }
+
+  const enableWatchMode = document.getElementById('enable-watch-mode').checked;
+  const statusEl = document.getElementById('scan-status');
+  statusEl.textContent = `🔄 Scanning ${folderPath}...`;
+  statusEl.style.color = '#4ecca3';
+
+  try {
+    const resp = await fetch('/api/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder: folderPath })
+    });
+
+    const data = await resp.json();
+
+    if (data.success) {
+      // Start watcher if checkbox is enabled
+      if (enableWatchMode) {
+        statusEl.textContent = '✅ Scan complete! Starting LIVE mode...';
+
+        const watchResp = await fetch('/api/watch-start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            folder_path: folderPath,
+            graph_path: data.graph_path
+          })
+        });
+
+        const watchData = await watchResp.json();
+        if (watchData.success) {
+          statusEl.textContent = '✅ Scan complete! LIVE mode active. Reloading...';
+          // Store watch state in sessionStorage so the page knows it's active
+          sessionStorage.setItem('watch_active', 'true');
+          sessionStorage.setItem('watch_folder', folderPath);
+          sessionStorage.setItem('watch_graph', data.graph_path);
+        } else {
+          statusEl.textContent = `⚠️ Scan complete but LIVE mode failed: ${watchData.error}`;
+        }
+      } else {
+        statusEl.textContent = '✅ Scan complete! Reloading graph...';
+      }
+
+      setTimeout(() => {
+        window.location.href = `/?graph=${encodeURIComponent(data.graph_path)}`;
+      }, 1000);
+    } else {
+      statusEl.textContent = `❌ Error: ${data.error || 'Scan failed'}`;
+      statusEl.style.color = '#e94560';
+    }
+  } catch (err) {
+    statusEl.textContent = `❌ Error: ${err.message}`;
+    statusEl.style.color = '#e94560';
+  }
+}
+
+// Quick select folder
+function setQuickFolder(path) {
+  document.getElementById('scan-folder-input').value = path;
+}
+
+// -----------------------------------------------------------------------
+// Mode Help & Controls
+// -----------------------------------------------------------------------
+function toggleModeHelp() {
+  const panel = document.getElementById('mode-help-panel');
+  const isVisible = panel.style.display !== 'none';
+  panel.style.display = isVisible ? 'none' : 'block';
+}
+
+function toggleWatchMode() {
+  const indicator = document.getElementById('watch-status-compact');
+  const isActive = indicator.style.opacity === '1';
+
+  if (isActive) {
+    // Stop watch mode
+    stopWatcher();
+  } else {
+    // Show help message for starting watch mode
+    alert(
+      '📍 To enable LIVE mode:\n\n' +
+      '1. Click the "📁 Scan Folder" button\n' +
+      '2. Check "● Enable LIVE Mode"\n' +
+      '3. Click Scan\n\n' +
+      'The graph will automatically update when files change!'
+    );
   }
 }
 
