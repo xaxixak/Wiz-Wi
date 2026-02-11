@@ -1,8 +1,65 @@
 # Workspace Intelligence Layer - Research Synthesis
 
 ## Date: 2026-02-09
+## Updated: 2026-02-11 (BMAD Status Update)
 ## Agents: 3 parallel research agents (Code Intelligence Systems, Ontology Design, Pipeline Strategy)
 ## Methodology: BMAD Method (Level 2-3, BMad Method Track)
+
+> **See PROJECT_PLAN.md for the current main plan and roadmap.**
+> This document contains the original research, BMAD epics, and detailed ADRs.
+
+---
+
+## BMAD Status Tracker (Updated 2026-02-11)
+
+### Phase Status
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 1: Analysis | DONE | 3-agent deep research |
+| Phase 2: Planning | DONE | This document |
+| Phase 3: Solutioning | DONE | ontology.py v2, ONTOLOGY_DESIGN.md |
+| Phase 4: Implementation | IN PROGRESS | See epic status below |
+
+### Epic Status
+| Epic | Status | Completion | Blockers |
+|------|--------|-----------|----------|
+| 1. Foundation | PARTIAL | ~40% | Orchestrator not wired. MODULE nodes missing. IMPORTS edges not connected. |
+| 2. Intelligence | NOT STARTED | 0% | Blocked by Epic 1 completion |
+| 3. Self-Healing | NOT STARTED | 0% | Blocked by Epic 2 |
+| 4. Consumption | NOT STARTED | 0% | Blocked by Epic 1-2 |
+| 5. Quality & Scale | PARTIAL | ~20% | Viewer built early (5.4 done). Scale strategy defined (ADR-007/008). |
+
+### Story Status (Epic 1 - Foundation)
+| Story | Status | Notes |
+|-------|--------|-------|
+| 1.1 Upgrade ontology to v2 | DONE | ontology.py has 20 nodes, 27 edges |
+| 1.2 Fix scanner.py bugs | PARTIAL | .csproj bug still exists, monorepo not done |
+| 1.3 Bridge scanner → graph | DONE | bridge.py converts scanner → graph |
+| 1.4 Build pass1_treesitter.py | DONE (code) | File exists but NOT wired into orchestrator |
+| 1.5 Build pass2_patterns.py | DONE (code) | File exists but NOT wired into orchestrator |
+| 1.6 Build pipeline orchestrator | NOT DONE | Skeleton only. This is the critical blocker. |
+
+### Story Status (Epic 5 - Quality & Scale) — Built Early
+| Story | Status | Notes |
+|-------|--------|-------|
+| 5.4 Build graph viewer | DONE | D3.js viewer with filtering, search, SSE live updates |
+| 5.4+ Runtime layer | DONE | test-shop probe → WI server → viewer (not in original plan) |
+
+### New Work Not in Original Plan
+| What | Status | Where |
+|------|--------|-------|
+| Runtime activity probe | DONE | test-shop/src/services/wi-probe.js |
+| SSE runtime events | DONE | viewer/server.py, viewer/index.html |
+| Viewer folder picker | DONE | viewer/server.py (native Windows dialog) |
+| PROJECT_PLAN.md | DONE | Main plan document created |
+| ADR-007/008/009 | DONE | Scale/scan/runtime decisions documented |
+
+### Critical Gaps Identified
+1. **Pipeline orchestrator** (Story 1.6) — passes exist but don't run together
+2. **MODULE nodes for directories** — ontology defines MODULE but nothing creates it
+3. **IMPORTS edges** — pass1_treesitter.py has code but isn't wired
+4. **Viewer scale strategy** — 1000+ nodes will freeze browser (ADR-007: focal point navigation)
+5. **3 scan modes needed** — snapshot/incremental/expansion (ADR-008)
 
 ---
 
@@ -315,13 +372,14 @@ workspace-intelligence/
 
 ---
 
-## 8. What NOT to Build
+## 8. What NOT to Build (Revised 2026-02-11)
 
 - LangGraph (direct API calls are simpler for this use case)
-- Runtime tracing (this is static analysis + LLM, not APM)
+- ~~Runtime tracing~~ → **BUILT** (2026-02-10) as overlay layer, not APM — lightweight probe + SSE
 - Test file LLM analysis (skip in Pass 3, waste of tokens)
 - Full Neo4j for MVP (NetworkX is sufficient under 10K nodes)
 - Custom embedding model (use off-the-shelf MiniLM or Voyage)
+- Full graph rendering at scale (use focal point navigation instead — ADR-007)
 
 ## 9. Architecture Decision Records (ADRs)
 

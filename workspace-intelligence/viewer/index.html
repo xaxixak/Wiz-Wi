@@ -269,6 +269,149 @@ body {
   filter: drop-shadow(0 0 8px #e94560);
 }
 
+/* --- Runtime activity overlay --- */
+.runtime-ripple {
+  fill: none;
+  pointer-events: none;
+}
+
+/* Persistent glow on active runtime nodes */
+@keyframes runtime-glow-pulse {
+  0%, 100% { filter: drop-shadow(0 0 6px #ff6b6b) drop-shadow(0 0 12px rgba(255,107,107,0.4)); }
+  50% { filter: drop-shadow(0 0 10px #ff6b6b) drop-shadow(0 0 20px rgba(255,107,107,0.6)); }
+}
+
+.node-runtime-active .node-shape {
+  stroke: #ff6b6b !important;
+  stroke-width: 3 !important;
+  animation: runtime-glow-pulse 1.5s ease-in-out infinite;
+}
+
+.node-runtime-active .node-label {
+  fill: #ff6b6b !important;
+  font-weight: 700;
+}
+
+/* Animated flow path between nodes */
+@keyframes runtime-flow-dash {
+  to { stroke-dashoffset: -20; }
+}
+
+.runtime-flow-line {
+  fill: none;
+  stroke: #ff6b6b;
+  stroke-width: 2.5;
+  stroke-dasharray: 6,4;
+  animation: runtime-flow-dash 0.6s linear infinite;
+  pointer-events: none;
+}
+
+.runtime-flow-arrow {
+  fill: #ff6b6b;
+  pointer-events: none;
+}
+
+#runtime-banner {
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  z-index: 1000;
+  background: rgba(26, 26, 46, 0.95);
+  border: 1px solid #ff6b6b;
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: #ff6b6b;
+  font-size: 12px;
+  font-family: 'Consolas', monospace;
+  max-width: 400px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+.runtime-indicator {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #ff6b6b;
+  margin-left: 12px;
+}
+
+.runtime-indicator.active { display: flex; }
+
+@keyframes runtime-dot-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.runtime-dot {
+  width: 8px;
+  height: 8px;
+  background: #ff6b6b;
+  border-radius: 50%;
+  animation: runtime-dot-pulse 1.5s ease-in-out infinite;
+}
+
+/* --- Runtime activity log panel --- */
+#runtime-log {
+  display: none;
+  flex-direction: column;
+  gap: 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+#runtime-log.has-events { display: flex; }
+
+.runtime-log-entry {
+  font-size: 11px;
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(255,107,107,0.1);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.runtime-log-entry:hover { background: rgba(255,107,107,0.1); }
+
+.runtime-log-entry .rle-time {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-right: 6px;
+}
+
+.runtime-log-entry .rle-type {
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.runtime-log-entry .rle-event { color: #ff9f43; }
+.runtime-log-entry .rle-http { color: #4ecca3; }
+.runtime-log-entry .rle-http-err { color: #e94560; }
+
+.runtime-log-entry .rle-nodes {
+  color: var(--text-muted);
+  font-size: 10px;
+  display: block;
+  margin-top: 2px;
+}
+
+.runtime-log-entry .rle-node-tag {
+  display: inline-block;
+  background: rgba(255,107,107,0.15);
+  border: 1px solid rgba(255,107,107,0.3);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin: 1px 2px;
+  font-size: 10px;
+  color: #ff6b6b;
+  cursor: pointer;
+}
+
+.runtime-log-entry .rle-node-tag:hover {
+  background: rgba(255,107,107,0.3);
+}
+
 /* --- Scrollbar --- */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -308,6 +451,11 @@ body {
       <span style="color:#3fb950; font-weight: 600; font-size: 14px;">● LIVE</span>
       <button onclick="stopWatcher()" class="btn-stop-watch" style="background: #da3633; color: #fff; border: none; border-radius: 4px; padding: 4px 12px; cursor: pointer; font-size: 12px;">Stop Watching</button>
     </div>
+    <div id="runtime-status" class="runtime-indicator">
+      <span class="runtime-dot"></span>
+      <span>RUNTIME</span>
+      <span id="runtime-event-count" style="color:#e0e0e0">0 events</span>
+    </div>
   </div>
 
   <!-- Sidebar: filters + detail panel -->
@@ -341,6 +489,13 @@ body {
         <button onclick="toggleAll('edgeGroup', false)">None</button>
       </div>
       <div class="filter-group" id="edge-group-filters"></div>
+    </div>
+
+    <!-- Runtime activity log -->
+    <div class="filter-section">
+      <h3 style="color:#ff6b6b">Runtime Activity</h3>
+      <div id="runtime-log"></div>
+      <div id="runtime-log-empty" style="font-size:11px;color:var(--text-muted);font-style:italic;">No runtime events yet</div>
     </div>
 
     <!-- Detail panel -->
@@ -1118,10 +1273,434 @@ async function reloadGraph() {
 }
 
 // -----------------------------------------------------------------------
+// Runtime Activity Layer
+// -----------------------------------------------------------------------
+const EVENT_TO_NODE_HINTS = {
+  'PRODUCT_CREATED':  { files: ['products.js', 'Product.js'], functions: ['showProductModal', 'authMiddleware', 'emitEvent'], names: ['PRODUCT_CREATED'], flow: ['showProductModal', 'products.js', 'authMiddleware', 'Product.js', 'emitEvent', 'PRODUCT_CREATED'] },
+  'PRODUCT_UPDATED':  { files: ['products.js', 'Product.js'], functions: ['editProduct', 'authMiddleware', 'emitEvent'], names: ['PRODUCT_UPDATED'], flow: ['editProduct', 'products.js', 'authMiddleware', 'Product.js', 'emitEvent', 'PRODUCT_UPDATED'] },
+  'PRODUCT_DELETED':  { files: ['products.js', 'Product.js'], functions: ['deleteProduct', 'authMiddleware', 'emitEvent'], names: ['PRODUCT_DELETED'], flow: ['deleteProduct', 'products.js', 'authMiddleware', 'Product.js', 'emitEvent', 'PRODUCT_DELETED'] },
+  'ORDER_CREATED':    { files: ['orders.js', 'Order.js'],     functions: ['emitEvent', 'enqueueJob'], names: ['ORDER_CREATED'],   flow: ['orders.js', 'Order.js', 'emitEvent', 'ORDER_CREATED'] },
+  'ORDER_CANCELLED':  { files: ['orders.js', 'Order.js'],     functions: ['emitEvent', 'enqueueJob'], names: ['ORDER_CANCELLED'], flow: ['orders.js', 'Order.js', 'emitEvent', 'ORDER_CANCELLED'] },
+  'USER_CREATED':     { files: ['users.js', 'User.js'],       functions: ['emitEvent'], names: ['USER_CREATED'],    flow: ['users.js', 'User.js', 'emitEvent', 'USER_CREATED'] },
+  'USER_LOGGED_IN':   { files: ['users.js'],                  functions: ['emitEvent'], names: ['USER_LOGGED_IN'],  flow: ['users.js', 'emitEvent', 'USER_LOGGED_IN'] },
+  'USER_UPDATED':     { files: ['users.js', 'User.js'],       functions: ['emitEvent'], names: ['USER_UPDATED'],    flow: ['users.js', 'User.js', 'emitEvent', 'USER_UPDATED'] },
+  'PAYMENT_RECEIVED': { files: ['webhooks.js', 'stripe.js'],  functions: ['emitEvent', 'createPaymentIntent'], names: ['PAYMENT_RECEIVED'], flow: ['webhooks.js', 'stripe.js', 'emitEvent', 'PAYMENT_RECEIVED'] },
+  'PAYMENT_FAILED':   { files: ['webhooks.js', 'stripe.js'],  functions: ['emitEvent'], names: ['PAYMENT_FAILED'],  flow: ['webhooks.js', 'stripe.js', 'emitEvent', 'PAYMENT_FAILED'] },
+  'SHIPPING_UPDATE':  { files: ['webhooks.js'],               functions: ['emitEvent'], names: ['SHIPPING_UPDATE'],  flow: ['webhooks.js', 'emitEvent', 'SHIPPING_UPDATE'] },
+};
+
+// HTTP method → function name mappings for more specific matching
+const METHOD_FUNCTION_HINTS = {
+  '/api/products': {
+    'DELETE': { functions: ['deleteProduct', 'authMiddleware'], flow: ['deleteProduct', 'products.js', 'authMiddleware', 'Product.js'] },
+    'POST':   { functions: ['showProductModal', 'authMiddleware'], flow: ['showProductModal', 'products.js', 'authMiddleware', 'Product.js'] },
+    'PUT':    { functions: ['editProduct', 'authMiddleware'], flow: ['editProduct', 'products.js', 'authMiddleware', 'Product.js'] },
+    'GET':    { functions: ['loadProducts'], flow: ['app.js', 'products.js', 'loadProducts'] },
+  },
+  '/api/orders': {
+    'POST':   { functions: ['emitEvent', 'enqueueJob', 'createPaymentIntent'], flow: ['app.js', 'orders.js', 'Order.js', 'createPaymentIntent'] },
+    'GET':    { functions: ['loadOrders', 'getCache'], flow: ['app.js', 'orders.js', 'getCache'] },
+  },
+  '/api/users': {
+    'GET':    { functions: ['loadUsers'], flow: ['app.js', 'users.js', 'loadUsers'] },
+    'PUT':    { functions: ['emitEvent'], flow: ['app.js', 'users.js', 'User.js'] },
+  },
+};
+
+const PATH_TO_FILE_HINTS = {
+  '/api/products': { files: ['products.js', 'Product.js'], flow: ['app.js', 'products.js', 'Product.js'] },
+  '/api/orders':   { files: ['orders.js', 'Order.js'],     flow: ['app.js', 'orders.js', 'Order.js'] },
+  '/api/users':    { files: ['users.js', 'User.js'],       flow: ['app.js', 'users.js', 'User.js'] },
+  '/api/webhooks': { files: ['webhooks.js'],                flow: ['app.js', 'webhooks.js'] },
+  '/api/admin':    { files: ['admin.js'],                   flow: ['app.js', 'admin.js'] },
+};
+
+function findMatchingNodeIds(runtimeEvent) {
+  const matched = new Set();
+
+  if (runtimeEvent.type === 'domain_event') {
+    const hints = EVENT_TO_NODE_HINTS[runtimeEvent.event_name];
+    if (hints) {
+      for (const node of rawData.nodes) {
+        // Match file nodes
+        if (hints.files.some(f => node.name === f)) matched.add(node.id);
+        // Match Event nodes
+        if (node.type === 'Event' && hints.names.some(n => node.name === n)) matched.add(node.id);
+        // Match function nodes (the sub-items inside files)
+        if (node.type === 'Function' && hints.functions && hints.functions.some(f => node.name === f)) matched.add(node.id);
+      }
+    }
+    for (const node of rawData.nodes) {
+      if (node.name === 'eventBus.js') matched.add(node.id);
+    }
+  }
+
+  if (runtimeEvent.type === 'http_request') {
+    const path = runtimeEvent.path.split('?')[0];
+    const method = runtimeEvent.method;
+
+    for (const [prefix, hint] of Object.entries(PATH_TO_FILE_HINTS)) {
+      if (path.startsWith(prefix)) {
+        // Match file nodes
+        for (const node of rawData.nodes) {
+          if (hint.files.some(f => node.name === f)) matched.add(node.id);
+        }
+
+        // Match method-specific function nodes
+        const methodHints = METHOD_FUNCTION_HINTS[prefix];
+        if (methodHints && methodHints[method]) {
+          for (const node of rawData.nodes) {
+            if (node.type === 'Function' && methodHints[method].functions.some(f => node.name === f)) {
+              matched.add(node.id);
+            }
+          }
+        }
+        break;
+      }
+    }
+    // Also match app.js for HTTP requests
+    for (const node of rawData.nodes) {
+      if (node.name === 'app.js') matched.add(node.id);
+    }
+  }
+
+  return matched;
+}
+
+// Get ordered flow path for an event (returns array of node data objects)
+function getFlowPath(runtimeEvent) {
+  let flowNames = [];
+
+  if (runtimeEvent.type === 'domain_event') {
+    const hints = EVENT_TO_NODE_HINTS[runtimeEvent.event_name];
+    if (hints && hints.flow) flowNames = hints.flow;
+  } else if (runtimeEvent.type === 'http_request') {
+    const path = runtimeEvent.path.split('?')[0];
+    const method = runtimeEvent.method;
+
+    // Try method-specific flow first
+    for (const [prefix, methodMap] of Object.entries(METHOD_FUNCTION_HINTS)) {
+      if (path.startsWith(prefix) && methodMap[method] && methodMap[method].flow) {
+        flowNames = methodMap[method].flow;
+        break;
+      }
+    }
+
+    // Fallback to generic path flow
+    if (flowNames.length === 0) {
+      for (const [prefix, hint] of Object.entries(PATH_TO_FILE_HINTS)) {
+        if (path.startsWith(prefix)) {
+          flowNames = hint.flow || [];
+          break;
+        }
+      }
+    }
+  }
+
+  // Resolve flow names to actual positioned nodes
+  const flowNodes = [];
+  const nodeMap = {};
+  nodeG.selectAll('.node-group').each(function(d) { nodeMap[d.name] = d; });
+
+  for (const name of flowNames) {
+    if (nodeMap[name]) flowNodes.push(nodeMap[name]);
+  }
+
+  return flowNodes;
+}
+
+let _runtimeBanner = null;
+let _runtimeEventCount = 0;
+let _activeGlowTimers = []; // Track active glow timers for cleanup
+let _activeFlowElements = []; // Track flow path SVG elements
+
+function showRuntimeRipple(nodeIds, runtimeEvent) {
+  const matchedNodes = [];
+  nodeG.selectAll('.node-group').each(function(d) {
+    if (nodeIds.has(d.id)) matchedNodes.push({ el: this, d: d });
+  });
+
+  // 1. Add persistent glow class to matched nodes (stays for 8s)
+  for (const { el } of matchedNodes) {
+    const group = d3.select(el);
+    group.classed('node-runtime-active', true);
+  }
+
+  // Schedule glow removal after 8s
+  const glowTimer = setTimeout(() => {
+    for (const { el } of matchedNodes) {
+      d3.select(el).classed('node-runtime-active', false);
+    }
+  }, 8000);
+  _activeGlowTimers.push(glowTimer);
+
+  // 2. Expanding ripple rings (on top of persistent glow)
+  for (const { el } of matchedNodes) {
+    const group = d3.select(el);
+
+    group.append('circle')
+      .attr('class', 'runtime-ripple')
+      .attr('cx', 0).attr('cy', 0).attr('r', 8)
+      .attr('stroke', '#ff6b6b').attr('stroke-width', 3).attr('opacity', 0.9)
+      .transition().duration(1500)
+      .attr('r', 45).attr('stroke-width', 0.5).attr('opacity', 0)
+      .remove();
+
+    setTimeout(() => {
+      group.append('circle')
+        .attr('class', 'runtime-ripple')
+        .attr('cx', 0).attr('cy', 0).attr('r', 8)
+        .attr('stroke', '#ff6b6b').attr('stroke-width', 2).attr('opacity', 0.6)
+        .transition().duration(1500)
+        .attr('r', 45).attr('stroke-width', 0.5).attr('opacity', 0)
+        .remove();
+    }, 400);
+  }
+
+  // 3. Floating event label (larger, stays longer) with payload detail
+  if (matchedNodes.length > 0) {
+    const p = matchedNodes[0].d;
+    let label, detail;
+
+    if (runtimeEvent.type === 'domain_event') {
+      label = runtimeEvent.event_name;
+      detail = formatPayload(runtimeEvent.payload);
+    } else {
+      label = `${runtimeEvent.method} ${runtimeEvent.path}`;
+      detail = `${runtimeEvent.status}`;
+    }
+
+    // Main label
+    g.append('text')
+      .attr('x', p.x).attr('y', p.y - 30)
+      .text(label)
+      .style('font-size', '13px').style('font-weight', '700')
+      .style('fill', '#ff6b6b').style('text-anchor', 'middle')
+      .style('pointer-events', 'none')
+      .style('text-shadow', '0 0 8px rgba(255,107,107,0.6)')
+      .transition().duration(5000)
+      .attr('y', p.y - 65).style('opacity', 0)
+      .remove();
+
+    // Detail line (product name, order id, etc)
+    if (detail) {
+      g.append('text')
+        .attr('x', p.x).attr('y', p.y - 16)
+        .text(detail)
+        .style('font-size', '11px').style('font-weight', '400')
+        .style('fill', '#ff9f43').style('text-anchor', 'middle')
+        .style('pointer-events', 'none')
+        .transition().duration(5000)
+        .attr('y', p.y - 51).style('opacity', 0)
+        .remove();
+    }
+  }
+
+  // 4. Draw animated flow path between nodes
+  const flowNodes = getFlowPath(runtimeEvent);
+  if (flowNodes.length >= 2) {
+    showFlowPath(flowNodes);
+  }
+}
+
+function showFlowPath(flowNodes) {
+  // Create a group for the flow path
+  const flowG = g.append('g').attr('class', 'runtime-flow-group');
+  _activeFlowElements.push(flowG);
+
+  // Draw animated dashed lines between consecutive flow nodes
+  for (let i = 0; i < flowNodes.length - 1; i++) {
+    const src = flowNodes[i];
+    const tgt = flowNodes[i + 1];
+
+    // Animated dashed line
+    flowG.append('line')
+      .attr('class', 'runtime-flow-line')
+      .attr('x1', src.x).attr('y1', src.y)
+      .attr('x2', src.x).attr('y2', src.y) // Start from source
+      .transition().duration(300).delay(i * 200)
+      .attr('x2', tgt.x).attr('y2', tgt.y); // Animate to target
+
+    // Arrow head at midpoint
+    const mx = (src.x + tgt.x) / 2;
+    const my = (src.y + tgt.y) / 2;
+    const angle = Math.atan2(tgt.y - src.y, tgt.x - src.x) * 180 / Math.PI;
+
+    flowG.append('polygon')
+      .attr('class', 'runtime-flow-arrow')
+      .attr('points', '0,-5 10,0 0,5')
+      .attr('transform', `translate(${mx},${my}) rotate(${angle})`)
+      .attr('opacity', 0)
+      .transition().delay(i * 200 + 200).duration(200)
+      .attr('opacity', 0.8);
+
+    // Step number at midpoint
+    flowG.append('text')
+      .attr('x', mx).attr('y', my - 10)
+      .text(i + 1)
+      .style('font-size', '9px').style('fill', '#ff6b6b')
+      .style('text-anchor', 'middle').style('font-weight', '700')
+      .style('pointer-events', 'none')
+      .attr('opacity', 0)
+      .transition().delay(i * 200 + 200).duration(200)
+      .attr('opacity', 0.7);
+  }
+
+  // Remove flow path after 6s
+  setTimeout(() => {
+    flowG.transition().duration(1000).style('opacity', 0).remove();
+    _activeFlowElements = _activeFlowElements.filter(e => e !== flowG);
+  }, 6000);
+}
+
+function showRuntimeBanner(data) {
+  if (!_runtimeBanner) {
+    _runtimeBanner = document.createElement('div');
+    _runtimeBanner.id = 'runtime-banner';
+    document.body.appendChild(_runtimeBanner);
+  }
+
+  let msg = '';
+  if (data.type === 'domain_event') {
+    const detail = formatPayload(data.payload);
+    msg = `<span style="color:#ff9f43">EVENT</span> ${data.event_name}${detail ? ` <span style="color:#e0e0e0">${detail}</span>` : ''}`;
+  } else if (data.type === 'http_request') {
+    const sc = data.status < 400 ? '#4ecca3' : '#e94560';
+    msg = `<span style="color:${sc}">${data.method} ${data.path}</span> ${data.status} (${data.duration_ms}ms)`;
+  }
+
+  _runtimeBanner.innerHTML = msg;
+  _runtimeBanner.style.opacity = '1';
+  clearTimeout(_runtimeBanner._timer);
+  _runtimeBanner._timer = setTimeout(() => { _runtimeBanner.style.opacity = '0'; }, 4000);
+}
+
+// Format event payload for display
+function formatPayload(payload) {
+  if (!payload) return '';
+  const parts = [];
+  if (payload.name) parts.push(payload.name);
+  else if (payload.productId) parts.push(`id: ${payload.productId}`);
+  else if (payload.orderId) parts.push(`order: ${payload.orderId}`);
+  else if (payload.userId) parts.push(`user: ${payload.userId}`);
+  if (payload.total) parts.push(`$${payload.total}`);
+  if (payload.itemCount) parts.push(`${payload.itemCount} items`);
+  return parts.join(' | ');
+}
+
+// Runtime activity log in sidebar
+const _runtimeLog = [];
+const MAX_LOG_ENTRIES = 20;
+
+function addRuntimeLogEntry(data, matchedNodeIds) {
+  const log = document.getElementById('runtime-log');
+  const emptyMsg = document.getElementById('runtime-log-empty');
+
+  // Build entry
+  const entry = document.createElement('div');
+  entry.className = 'runtime-log-entry';
+
+  const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  let typeHtml = '';
+  let detailHtml = '';
+
+  if (data.type === 'domain_event') {
+    typeHtml = `<span class="rle-type rle-event">EVENT</span>`;
+    const payloadSummary = formatPayload(data.payload);
+    detailHtml = `${data.event_name}${payloadSummary ? `<br><span style="color:var(--text-muted);font-size:10px">${payloadSummary}</span>` : ''}`;
+  } else if (data.type === 'http_request') {
+    const cls = data.status >= 400 ? 'rle-http-err' : 'rle-http';
+    typeHtml = `<span class="rle-type ${cls}">${data.method}</span>`;
+    detailHtml = `${data.path} <span style="color:var(--text-muted)">${data.status} (${data.duration_ms}ms)</span>`;
+  }
+
+  // Resolve matched node names
+  const matchedNames = [];
+  nodeG.selectAll('.node-group').each(function(d) {
+    if (matchedNodeIds.has(d.id)) matchedNames.push(d.name);
+  });
+
+  const nodeTags = matchedNames.map(n =>
+    `<span class="rle-node-tag" data-node-name="${n}">${n}</span>`
+  ).join('');
+
+  entry.innerHTML = `
+    <span class="rle-time">${time}</span>
+    ${typeHtml} ${detailHtml}
+    <span class="rle-nodes">${nodeTags || '<i>no matched nodes</i>'}</span>
+  `;
+
+  // Click node tags to highlight them on graph
+  entry.querySelectorAll('.rle-node-tag').forEach(tag => {
+    tag.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const name = tag.dataset.nodeName;
+      // Find and select the node
+      nodeG.selectAll('.node-group').each(function(d) {
+        if (d.name === name) selectNode(d);
+      });
+    });
+  });
+
+  // Click the entry itself to re-highlight involved nodes
+  entry.addEventListener('click', () => {
+    highlightNodesTemporarily(matchedNodeIds, 5000);
+  });
+
+  // Prepend entry (newest first)
+  log.insertBefore(entry, log.firstChild);
+  log.classList.add('has-events');
+  if (emptyMsg) emptyMsg.style.display = 'none';
+
+  // Trim old entries
+  while (log.children.length > MAX_LOG_ENTRIES) {
+    log.removeChild(log.lastChild);
+  }
+}
+
+function highlightNodesTemporarily(nodeIds, durationMs) {
+  nodeG.selectAll('.node-group').each(function(d) {
+    if (nodeIds.has(d.id)) {
+      d3.select(this).classed('node-runtime-active', true);
+    }
+  });
+  setTimeout(() => {
+    nodeG.selectAll('.node-group').each(function(d) {
+      if (nodeIds.has(d.id)) {
+        d3.select(this).classed('node-runtime-active', false);
+      }
+    });
+  }, durationMs);
+}
+
+function initRuntimeLayer() {
+  if (!_eventSource) return;
+
+  _eventSource.addEventListener('runtime-activity', (e) => {
+    const data = JSON.parse(e.data);
+    console.log('[RUNTIME]', data.type, data.event_name || data.path);
+
+    const nodeIds = findMatchingNodeIds(data);
+    if (nodeIds.size > 0) showRuntimeRipple(nodeIds, data);
+    showRuntimeBanner(data);
+    addRuntimeLogEntry(data, nodeIds);
+
+    _runtimeEventCount++;
+    const indicator = document.getElementById('runtime-status');
+    if (indicator) {
+      indicator.classList.add('active');
+      document.getElementById('runtime-event-count').textContent =
+        `${_runtimeEventCount} event${_runtimeEventCount !== 1 ? 's' : ''}`;
+    }
+  });
+}
+
+// -----------------------------------------------------------------------
 // Boot
 // -----------------------------------------------------------------------
 loadData();
 initLiveUpdates();
+initRuntimeLayer();
 
 </script>
 </body>

@@ -198,18 +198,25 @@ class TreeSitterPass:
         Extract import paths from the AST.
 
         Returns list of imported module/file paths.
+        Handles both ES6 imports and CommonJS require().
         """
         imports = []
         import_types = SUPPORTED_LANGUAGES[language]["import_types"]
+        import re as re_mod
 
         def traverse(node: 'TSNode'):
+            # ES6: import x from 'path'
             if node.type in import_types:
-                # Extract the import path
                 text = self._node_text(node, source_bytes)
-                # Simple extraction - parse quoted strings
-                import re
-                matches = re.findall(r'["\']([^"\']+)["\']', text)
+                matches = re_mod.findall(r'["\']([^"\']+)["\']', text)
                 imports.extend(matches)
+
+            # CommonJS: require('path') or require("path")
+            if node.type == "call_expression":
+                text = self._node_text(node, source_bytes)
+                req_match = re_mod.match(r'require\s*\(\s*["\']([^"\']+)["\']\s*\)', text)
+                if req_match:
+                    imports.append(req_match.group(1))
 
             for child in node.children:
                 traverse(child)

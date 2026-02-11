@@ -401,8 +401,23 @@ def make_handler():
                     else:
                         self._send_json({"error": "No active watcher found"})
 
+            elif parsed.path == "/api/runtime-event":
+                content_len = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_len).decode("utf-8") if content_len > 0 else "{}"
+                data = json.loads(body) if body else {}
+                broadcast_sse("runtime-activity", data)
+                self._send_json_cors({"received": True})
+
             else:
                 self._send_error(404, "Not found")
+
+        def do_OPTIONS(self):
+            """Handle CORS preflight requests."""
+            self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.end_headers()
 
         def _default_browse_path(self):
             """Default path for folder browser."""
@@ -536,6 +551,16 @@ def make_handler():
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _send_json_cors(self, data):
+            body = json.dumps(data, default=str).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             self.wfile.write(body)
