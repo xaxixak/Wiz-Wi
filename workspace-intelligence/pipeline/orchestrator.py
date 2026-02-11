@@ -8,12 +8,13 @@ Pipeline passes:
   Pass 1: Tree-sitter AST extraction (FREE) — creates File/Function/Class nodes
   Pass 2: Regex pattern matching (FREE) — detects endpoints, models, events, etc.
   Pass 2b: Behavioral connections (FREE) — CALLS, READS_DB, EMITS_EVENT, etc.
-  Pass 3: LLM semantic enrichment (PAID) — future
-  Pass 4: Validation & scoring (FREE) — future
+  Pass 3: LLM semantic enrichment (PAID) — operational edges, node descriptions
+  Pass 4: Validation & confidence scoring (FREE) — quality gate
 """
 
 import sys
 import time
+import asyncio
 import logging
 from pathlib import Path
 from typing import Optional, List
@@ -29,6 +30,8 @@ from ontology import GraphNode, GraphEdge, NodeType, EdgeType, Provenance
 from pipeline.pass1_treesitter import TreeSitterPass
 from pipeline.pass2_patterns import PatternPass
 from pipeline.pass2b_connections import ConnectionPass
+from pipeline.pass3_llm import LLMPass
+from pipeline.pass4_validation import validate_graph
 
 logger = logging.getLogger("workspace-intelligence")
 
@@ -103,15 +106,16 @@ def run_pipeline(
         workspace_path: Root directory to scan.
         output_path: Where to save the graph JSON (optional).
         max_depth: Max directory depth for scanner.
-        passes: Which passes to run (default: all available).
-                Options: ["scan", "treesitter", "patterns", "connections"]
+        passes: Which passes to run (default: all free passes).
+                Options: ["scan", "treesitter", "patterns", "connections", "llm", "validation"]
+                Note: "llm" requires ANTHROPIC_API_KEY and costs ~$2 per 500 files.
 
     Returns:
         PipelineResult with the populated GraphStore.
     """
     workspace_path = Path(workspace_path).resolve()
     if passes is None:
-        passes = ["scan", "treesitter", "patterns", "connections"]
+        passes = ["scan", "treesitter", "patterns", "connections", "validation"]
 
     start = time.perf_counter()
     store = GraphStore()
@@ -138,10 +142,121 @@ def run_pipeline(
         )
 
     # -- Pass 0b: Create MODULE nodes for directory structure -----------
-    if "scan" in passes and scan_result.projects:
+    if "scan" in passes:
         logger.info("Pass 0b: Creating directory structure (MODULE nodes)...")
         total_modules = 0
 
+        # If no projects detected, create MODULE nodes for entire workspace
+        if not scan_result.projects:
+            logger.info("  No projects detected, creating MODULE nodes for entire workspace...")
+            workspace_id = f"workspace:{workspace_path.name}"
+
+            # Walk all directories
+            dirs_to_process = []
+            for root, dirs, files in os.walk(workspace_path):
+                # Skip excluded directories
+                skip_dirs = {
+                    "node_modules", ".git", "__pycache__", ".venv", "venv",
+                    "dist", "build", "target", ".next", ".nuxt", ".turbo",
+                    ".nx", "coverage", ".pytest_cache", ".mypy_cache",
+                    ".idea", ".vscode", "obj", "bin",
+                }
+                dirs[:] = [d for d in dirs if d not in skip_dirs]
+
+                root_path = Path(root)
+                if root_path != workspace_path:
+                    dirs_to_process.append(root_path)
+
+            # Sort by depth (parents first)
+            dirs_to_process.sort(key=lambda d: len(d.parts))
+
+            for dir_path in dirs_to_process:
+                relative = dir_path.relative_to(workspace_path)
+                module_name = str(relative).replace("\\", "/")
+                module_id = f"module:{workspace_id}:{module_name}"
+
+                # Determine parent: workspace or parent directory
+                if dir_path.parent == workspace_path:
+                    parent_id = workspace_id
+                else:
+                    parent_relative = dir_path.parent.relative_to(workspace_path)
+                    parent_name = str(parent_relative).replace("\\", "/")
+                    parent_id = f"module:{workspace_id}:{parent_name}"
+
+                module_node = GraphNode(
+                    id=module_id,
+                    type=NodeType.MODULE,
+                    name=dir_path.name + "/",
+                    description=f"Directory: {module_name}",
+                    parent_id=parent_id,
+                    provenance=Provenance.SCANNER,
+                    confidence=1.0,
+                    metadata={"path": str(dir_path), "relative_path": module_name},
+                )
+                store.add_node(module_node)
+
+                # CONTAINS edge: parent → module
+                contains_edge = GraphEdge(
+                    source_id=parent_id,
+                    target_id=module_id,
+                    type=EdgeType.CONTAINS,
+                    provenance=Provenance.SCANNER,
+                    confidence=1.0,
+                )
+                store.add_edge(contains_edge, validate=False)
+                total_modules += 1
+
+            # Create File nodes for all files in workspace
+            total_files = 0
+            for root, dirs, files in os.walk(workspace_path):
+                skip_dirs = {
+                    "node_modules", ".git", "__pycache__", ".venv", "venv",
+                    "dist", "build", "target", ".next", ".nuxt", ".turbo",
+                    ".nx", "coverage", ".pytest_cache", ".mypy_cache",
+                    ".idea", ".vscode", "obj", "bin",
+                }
+                dirs[:] = [d for d in dirs if d not in skip_dirs]
+
+                root_path = Path(root)
+                for file_name in files:
+                    file_path = root_path / file_name
+                    relative_file = file_path.relative_to(workspace_path)
+                    file_id = f"file:{workspace_id}:{str(relative_file).replace(chr(92), '/')}"
+
+                    # Determine parent module
+                    if file_path.parent == workspace_path:
+                        parent_id = workspace_id
+                    else:
+                        parent_relative = file_path.parent.relative_to(workspace_path)
+                        parent_name = str(parent_relative).replace("\\", "/")
+                        parent_id = f"module:{workspace_id}:{parent_name}"
+
+                    file_node = GraphNode(
+                        id=file_id,
+                        type=NodeType.FILE,
+                        name=file_name,
+                        description=f"File: {str(relative_file)}",
+                        parent_id=parent_id,
+                        provenance=Provenance.SCANNER,
+                        confidence=1.0,
+                        metadata={"path": str(file_path), "relative_path": str(relative_file)},
+                    )
+                    store.add_node(file_node)
+
+                    # CONTAINS edge: parent → file
+                    contains_edge = GraphEdge(
+                        source_id=parent_id,
+                        target_id=file_id,
+                        type=EdgeType.CONTAINS,
+                        provenance=Provenance.SCANNER,
+                        confidence=1.0,
+                    )
+                    store.add_edge(contains_edge, validate=False)
+                    total_files += 1
+
+            logger.info(f"  Created {total_modules} MODULE nodes and {total_files} FILE nodes for workspace")
+
+        # If projects detected, create MODULE nodes for each project
         for project in scan_result.projects:
             language = PROJECT_LANGUAGE_MAP.get(project.project_type.value, "")
             if not language:
@@ -368,6 +483,68 @@ def run_pipeline(
             errors.append(f"Pass 2b error: {e}")
             logger.error(f"  Pass 2b failed: {e}")
 
+    # -- Pass 3: LLM Semantic Analysis (PAID) --------------------------
+    if "llm" in passes and scan_result.projects:
+        logger.info("Pass 3: LLM semantic analysis (PAID)...")
+        llm_pass = LLMPass(store)
+        total_nodes = 0
+        total_edges = 0
+        total_cost = 0.0
+
+        for project in scan_result.projects:
+            language = PROJECT_LANGUAGE_MAP.get(project.project_type.value, "")
+            if not language:
+                continue
+
+            project_id = f"project:{workspace_path.name}:{project.name}"
+
+            try:
+                summary = asyncio.run(
+                    llm_pass.process_project(project.path, project_id, language)
+                )
+                total_nodes += summary.get("nodes_created", 0)
+                total_edges += summary.get("edges_created", 0)
+                total_cost += summary.get("total_cost_usd", 0.0)
+
+                for err in summary.get("errors", []):
+                    errors.append(f"Pass 3: {err}")
+            except Exception as e:
+                errors.append(f"Pass 3 error on {project.name}: {e}")
+                logger.error(f"  Pass 3 failed for {project.name}: {e}")
+
+        passes_run.append("llm")
+        logger.info(
+            f"  Created {total_nodes} nodes, {total_edges} edges, "
+            f"cost: ${total_cost:.4f}"
+        )
+
+    # -- Pass 4: Validation & Confidence Scoring (FREE) ----------------
+    if "validation" in passes:
+        logger.info("Pass 4: Validation & confidence scoring...")
+        try:
+            val_result = validate_graph(store, fix=True)
+            passes_run.append("validation")
+
+            error_count = sum(
+                1 for i in val_result.issues if i.severity == "error"
+            )
+            warn_count = sum(
+                1 for i in val_result.issues if i.severity == "warning"
+            )
+            logger.info(
+                f"  {val_result.total_checks} checks, "
+                f"{error_count} errors, {warn_count} warnings, "
+                f"{val_result.confidence_adjustments} confidence adjustments"
+            )
+
+            if error_count > 0:
+                for issue in val_result.issues:
+                    if issue.severity == "error":
+                        errors.append(f"Pass 4: {issue.message}")
+        except Exception as e:
+            errors.append(f"Pass 4 error: {e}")
+            logger.error(f"  Pass 4 failed: {e}")
+
     # -- Save Output ---------------------------------------------------
     duration_ms = (time.perf_counter() - start) * 1000
 
@@ -466,9 +643,9 @@ def main():
     parser.add_argument(
         "--passes",
         nargs="+",
-        choices=["scan", "treesitter", "patterns", "connections"],
-        default=["scan", "treesitter", "patterns", "connections"],
-        help="Which passes to run (default: all)",
+        choices=["scan", "treesitter", "patterns", "connections", "llm", "validation"],
+        default=["scan", "treesitter", "patterns", "connections", "validation"],
+        help="Which passes to run (default: all free passes; add 'llm' for paid LLM analysis)",
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true",

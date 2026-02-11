@@ -271,7 +271,7 @@ class ViewerHandler(http.server.SimpleHTTPRequestHandler):
                     import traceback
                     error_details = traceback.format_exc()
                     result = {"error": str(e)}
-                    print(f"\n[LIVE] ❌ ERROR starting watcher:", flush=True)
+                    print(f"\n[LIVE] ERROR starting watcher:", flush=True)
                     print(f"{error_details}\n", flush=True)
 
             body = json.dumps(result).encode("utf-8")
