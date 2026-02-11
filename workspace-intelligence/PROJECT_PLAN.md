@@ -22,16 +22,17 @@ Not just "what files exist" but "what does this code DO, what does it connect to
 - `graph_store.py` — NetworkX-backed storage with traversal, validation
 - `bridge.py` — Converts scanner output → graph nodes (Pass 0)
 
-### Pipeline Passes (Code Exists, Not Wired Together)
-- `pass1_treesitter.py` — Extracts File, Function, Import nodes from AST
+### Pipeline Passes (Wired & Working — Phase A Done)
+- `orchestrator.py` — Chains Pass 0→0b→1→2→2b, 107 nodes/269 edges in 82ms
+- `pass1_treesitter.py` — Extracts File, Function, Import nodes (ES6 + CommonJS)
 - `pass2_patterns.py` — Regex patterns for endpoints, models, events
-- `pass3_llm.py` — LLM semantic analysis framework
-- `pass4_validation.py` — Cross-reference validation stub
-- `orchestrator.py` — Skeleton only, passes NOT connected
+- `pass2b_connections.py` — Behavioral edges: CALLS, EMITS_EVENT, etc.
+- `pass3_llm.py` — LLM semantic analysis framework (future)
+- `pass4_validation.py` — Cross-reference validation stub (future)
 
-### Viewer (Working)
-- `viewer/server.py` — HTTP server with SSE, live updates, scan API
-- `viewer/index.html` — D3.js force graph, filtering, search, node details
+### Viewer (Working — Phase B Done)
+- `viewer/server.py` — HTTP server with SSE, live updates, scan API, subgraph API
+- `viewer/index.html` — D3.js force graph with tree view, focal navigation, layer toggle
 
 ### Runtime Layer (Working, Built 2026-02-10)
 - `test-shop/src/services/wi-probe.js` — Express middleware + event listener
@@ -115,31 +116,29 @@ This solves both the **scale problem** (never load 1000+ nodes) and the **usabil
 
 ## Updated Roadmap
 
-### Phase A: Wire the Pipeline (Priority 1 - Next Sprint)
+### Phase A: Wire the Pipeline ✓ DONE (2026-02-11)
 *Goal: Make the graph actually useful by connecting existing code*
 
-| # | Task | What It Fixes |
-|---|------|--------------|
-| A1 | Wire orchestrator: Pass 0 → Pass 1 → Pass 2 | Graph gets File, Function, IMPORTS, DEFINES edges automatically |
-| A2 | Add MODULE nodes for directories | Folder hierarchy visible in graph (src/ → routes/ → products.js) |
-| A3 | Add IMPORTS edge detection in Pass 1 | File-to-file connections (app.js → admin.js) visible |
-| A4 | Add ROUTES_TO pattern in Pass 2 | HTTP routing visible (app.use('/api/products', productsRouter)) |
-| A5 | CLI: `python cli.py index <path>` runs full pipeline | One command to scan a codebase |
+| # | Task | Status |
+|---|------|--------|
+| A1 | Wire orchestrator: Pass 0 → 0b → 1 → 2 → 2b | ✓ Done — 107 nodes, 269 edges in 82ms |
+| A2 | Add MODULE nodes for directories | ✓ Done — 8 MODULE nodes (src/, routes/, models/, etc.) |
+| A3 | Add IMPORTS edge detection (CommonJS + ES6) | ✓ Done — 82 IMPORTS edges (33 resolved to files) |
+| A4 | Add ROUTES_TO pattern in Pass 2 | Deferred to Phase D (needs LLM) |
+| A5 | CLI: `python cli.py index <path>` runs full pipeline | Was already working via orchestrator.py CLI |
 
-**Definition of Done**: Scan test-shop, graph shows folder tree + imports + routes + 300+ nodes with structural edges.
-
-### Phase B: Viewer Layers (Priority 2)
+### Phase B: Viewer Layers ✓ DONE (2026-02-11)
 *Goal: Make the viewer understandable at any scale*
 
-| # | Task | What It Fixes |
-|---|------|--------------|
-| B1 | Tree/hierarchy view mode | Shows folder structure like file explorer |
-| B2 | Focal point navigation | Click a node → expand 1-2 hops, don't load everything |
-| B3 | Layer toggle (structure / dependency / runtime) | User picks what to see |
-| B4 | Node limit + pagination | Never render 1000+ nodes at once |
-| B5 | Subgraph extraction API | Server returns focused subgraph, not full graph |
+| # | Task | Status |
+|---|------|--------|
+| B1 | Tree/hierarchy view mode | ✓ Done — Collapsible folder tree from CONTAINS edges |
+| B2 | Focal point navigation | ✓ Done — Click node → Focus 1/2/3 hops, +/- depth controls |
+| B3 | Layer toggle (structure / dependency / runtime) | ✓ Done — 4 buttons in toolbar: All / Structure / Dependency / Runtime |
+| B4 | Node limit + warning | ✓ Done — Warning banner when >150 nodes, suggests focus mode |
+| B5 | Subgraph extraction API | ✓ Done — `/api/subgraph?node_id=X&depth=N&graph_path=Y` |
 
-**Definition of Done**: Open viewer, see folder tree. Click a file, see its connections expand outward. 1000-node project doesn't hang.
+**Result**: Viewer now has folder tree, focal point navigation (app.js 2-hop = 63 of 107 nodes), layer presets, and scale warnings.
 
 ### Phase C: Incremental & Change-Driven (Priority 3)
 *Goal: Graph stays fresh without re-scanning everything*

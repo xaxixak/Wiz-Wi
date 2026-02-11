@@ -260,6 +260,65 @@ def _start_watcher(folder_path, graph_path, passes=None, debounce_ms=800):
 
 
 # ---------------------------------------------------------------------------
+# Subgraph Extraction (for focal point navigation)
+# ---------------------------------------------------------------------------
+
+def _extract_subgraph(graph_path_str, node_id, depth=2):
+    """Extract a subgraph centered on node_id, N hops in all directions."""
+    gp = Path(graph_path_str)
+    if not gp.is_file():
+        return {"error": "Graph file not found"}
+
+    try:
+        with open(gp, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        return {"error": f"Failed to read graph: {e}"}
+
+    nodes_by_id = {n["id"]: n for n in data.get("nodes", [])}
+    if node_id not in nodes_by_id:
+        return {"error": f"Node not found: {node_id}"}
+
+    # Build adjacency (both directions)
+    adj = {}
+    for e in data.get("edges", []):
+        src = e.get("source_id", e.get("source"))
+        tgt = e.get("target_id", e.get("target"))
+        if src:
+            adj.setdefault(src, set()).add(tgt)
+        if tgt:
+            adj.setdefault(tgt, set()).add(src)
+
+    # BFS to collect nodes within N hops
+    visited = {node_id}
+    frontier = {node_id}
+    for _ in range(depth):
+        next_frontier = set()
+        for nid in frontier:
+            for neighbor in adj.get(nid, set()):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    next_frontier.add(neighbor)
+        frontier = next_frontier
+
+    sub_nodes = [n for n in data["nodes"] if n["id"] in visited]
+    sub_edges = [
+        e for e in data["edges"]
+        if (e.get("source_id", e.get("source")) in visited
+            and e.get("target_id", e.get("target")) in visited)
+    ]
+
+    return {
+        "nodes": sub_nodes,
+        "edges": sub_edges,
+        "focal_node": node_id,
+        "depth": depth,
+        "total_nodes": len(data["nodes"]),
+        "total_edges": len(data["edges"]),
+    }
+
+
+# ---------------------------------------------------------------------------
 # HTTP Handler
 # ---------------------------------------------------------------------------
 
@@ -285,6 +344,18 @@ def make_handler():
                 self._serve_graph(graph_path)
             elif path == "/api/graphs":
                 self._send_json(_find_existing_graphs())
+            elif path == "/api/subgraph":
+                node_id = params.get("node_id", [None])[0]
+                depth_str = params.get("depth", ["2"])[0]
+                graph_path = params.get("graph_path", [None])[0]
+                if not node_id or not graph_path:
+                    self._send_json({"error": "node_id and graph_path required"})
+                else:
+                    try:
+                        depth = min(int(depth_str), 5)
+                    except ValueError:
+                        depth = 2
+                    self._send_json(_extract_subgraph(graph_path, node_id, depth))
             elif path == "/api/browse":
                 dir_path = params.get("path", [self._default_browse_path()])[0]
                 self._send_json(_browse_directory(dir_path))

@@ -436,6 +436,95 @@ body {
   background: rgba(255,255,255,0.05);
   color: var(--text-primary);
 }
+
+/* --- Layer toggle --- */
+.layer-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.layer-btn:hover { background: rgba(255,255,255,0.05); color: var(--text-primary); }
+.layer-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* --- Focus buttons --- */
+.focus-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  background: rgba(249,202,36,0.15);
+  border: 1px solid rgba(249,202,36,0.4);
+  color: #f9ca24;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.focus-btn:hover { background: rgba(249,202,36,0.3); }
+
+/* --- Tree view --- */
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 3px;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.tree-item:hover { background: rgba(255,255,255,0.05); }
+.tree-item.tree-selected { background: rgba(74,144,217,0.2); }
+.tree-toggle {
+  width: 12px;
+  text-align: center;
+  font-size: 8px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  user-select: none;
+}
+.tree-toggle.has-children { cursor: pointer; }
+.tree-toggle.has-children:hover { color: var(--text-primary); }
+.tree-name { overflow: hidden; text-overflow: ellipsis; }
+.tree-children.collapsed { display: none; }
+
+/* --- Focal node highlight --- */
+.node-focal .node-shape {
+  stroke: #f9ca24 !important;
+  stroke-width: 3 !important;
+  filter: drop-shadow(0 0 8px rgba(249,202,36,0.5));
+}
+
+/* --- Focal indicator in toolbar --- */
+#focal-indicator {
+  font-size: 12px;
+  font-family: 'Consolas', monospace;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+/* --- Node limit warning --- */
+.node-limit-banner {
+  background: rgba(233,69,96,0.15);
+  border: 1px solid rgba(233,69,96,0.3);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #e94560;
+  margin-bottom: 8px;
+}
+.node-limit-banner button {
+  background: rgba(249,202,36,0.2);
+  border: 1px solid rgba(249,202,36,0.4);
+  color: #f9ca24;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 10px;
+  cursor: pointer;
+  margin-left: 6px;
+}
 </style>
 </head>
 <body>
@@ -456,10 +545,26 @@ body {
       <span>RUNTIME</span>
       <span id="runtime-event-count" style="color:#e0e0e0">0 events</span>
     </div>
+    <div class="layer-toggle" style="display:flex;gap:4px;margin-left:12px">
+      <button class="layer-btn active" data-layer="all" onclick="setViewLayer('all')">All</button>
+      <button class="layer-btn" data-layer="structure" onclick="setViewLayer('structure')">Structure</button>
+      <button class="layer-btn" data-layer="dependency" onclick="setViewLayer('dependency')">Dependency</button>
+      <button class="layer-btn" data-layer="runtime" onclick="setViewLayer('runtime')">Runtime</button>
+    </div>
+    <div id="focal-indicator" style="display:none"></div>
   </div>
 
   <!-- Sidebar: filters + detail panel -->
   <div id="sidebar">
+
+    <!-- Node limit warning (hidden by default) -->
+    <div id="node-limit-warning" class="node-limit-banner" style="display:none"></div>
+
+    <!-- Tree view -->
+    <div class="filter-section">
+      <h3>Structure Tree</h3>
+      <div id="tree-view" style="max-height:250px;overflow-y:auto"></div>
+    </div>
 
     <!-- Tier filter -->
     <div class="filter-section">
@@ -576,6 +681,13 @@ let simulation = null;
 let svg, g, linkG, nodeG;
 let selectedNodeId = null;
 
+// Focal point state
+let focalNodeId = null;
+let focalDepth = 2;
+let focalNodeSet = null;  // Set of node IDs in focal subgraph
+let activeLayer = 'all';
+const NODE_LIMIT = 150;
+
 const filters = {
   tier:      { macro: true, meso: true, micro: true },
   nodeType:  {},
@@ -620,9 +732,11 @@ async function loadData() {
   }
 
   buildFilterUI();
+  buildTreeView();
   initGraph();
   updateGraph();
   updateStats();
+  checkNodeLimit();
 }
 
 // -----------------------------------------------------------------------
@@ -763,6 +877,9 @@ function getFilteredData() {
 
   // Filter nodes
   const filteredNodes = rawData.nodes.filter(n => {
+    // Focal mode: only show nodes in focal subgraph
+    if (focalNodeSet && !focalNodeSet.has(n.id)) return false;
+
     const tier = n.tier || NODE_TIER[n.type] || 'micro';
     if (!filters.tier[tier]) return false;
     if (!filters.nodeType[n.type]) return false;
@@ -933,8 +1050,9 @@ function updateGraph() {
       return r + 12;
     });
 
-  // Update selected highlight
+  // Update selected + focal highlight
   nodeMerged.classed('node-selected', d => d.id === selectedNodeId);
+  nodeMerged.classed('node-focal', d => d.id === focalNodeId);
 
   // Apply live update highlight classes
   nodeMerged
@@ -1080,7 +1198,18 @@ function selectNode(d) {
       <span class="label">Tags</span><span class="value">${tags}</span>
       <span class="label">Description</span><span class="value">${d.description || '-'}</span>
     </div>
+    <div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:11px;color:var(--text-muted)">Focus:</span>
+      <button class="focus-btn" data-depth="1">1 hop</button>
+      <button class="focus-btn" data-depth="2">2 hops</button>
+      <button class="focus-btn" data-depth="3">3 hops</button>
+    </div>
   `;
+
+  // Attach focus button handlers
+  panel.querySelectorAll('.focus-btn').forEach(btn => {
+    btn.addEventListener('click', () => focusOnNode(d.id, parseInt(btn.dataset.depth)));
+  });
 }
 
 // Click on background to deselect
@@ -1265,6 +1394,7 @@ async function reloadGraph() {
       if (!(t in filters.nodeType)) filters.nodeType[t] = true;
     }
 
+    buildTreeView();
     updateGraph();
     updateStats();
   } catch (err) {
@@ -1693,6 +1823,279 @@ function initRuntimeLayer() {
         `${_runtimeEventCount} event${_runtimeEventCount !== 1 ? 's' : ''}`;
     }
   });
+}
+
+// -----------------------------------------------------------------------
+// B1: Tree/Hierarchy View
+// -----------------------------------------------------------------------
+function buildTreeView() {
+  const container = document.getElementById('tree-view');
+  if (!container) return;
+
+  // Build parent→children map from CONTAINS edges
+  const children = {};
+  const hasParent = new Set();
+
+  for (const edge of rawData.edges) {
+    if (edge.type !== 'CONTAINS') continue;
+    const parentId = edge.source_id || edge.source;
+    const childId = edge.target_id || edge.target;
+    if (!children[parentId]) children[parentId] = [];
+    children[parentId].push(childId);
+    hasParent.add(childId);
+  }
+
+  // Build node lookup
+  const nodeById = {};
+  for (const n of rawData.nodes) nodeById[n.id] = n;
+
+  // Find roots: nodes that have children but no parent in CONTAINS
+  const roots = [];
+  for (const parentId of Object.keys(children)) {
+    if (!hasParent.has(parentId) && nodeById[parentId]) {
+      roots.push(parentId);
+    }
+  }
+
+  if (roots.length === 0) {
+    container.innerHTML = '<div style="color:var(--text-muted);font-size:11px;font-style:italic;padding:4px">No hierarchy found</div>';
+    return;
+  }
+
+  function renderNode(nodeId, depth) {
+    const node = nodeById[nodeId];
+    if (!node) return '';
+
+    const kids = (children[nodeId] || []).filter(id => nodeById[id]);
+    const hasKids = kids.length > 0;
+    const tierColor = TIER_COLORS[node.tier || NODE_TIER[node.type] || 'micro'];
+
+    // Sort: modules first, then by name
+    kids.sort((a, b) => {
+      const na = nodeById[a], nb = nodeById[b];
+      if (!na || !nb) return 0;
+      const aM = na.type === 'Module' ? 0 : 1;
+      const bM = nb.type === 'Module' ? 0 : 1;
+      if (aM !== bM) return aM - bM;
+      return (na.name || '').localeCompare(nb.name || '');
+    });
+
+    const icon = hasKids ? '\u25BC' : '\u2022';
+    const indent = depth * 14;
+
+    let html = `<div class="tree-item" data-node-id="${nodeId}" style="padding-left:${indent}px" title="${node.type}: ${node.id}">`;
+    html += `<span class="tree-toggle${hasKids ? ' has-children' : ''}">${icon}</span>`;
+    html += `<span class="color-dot" style="background:${tierColor}"></span>`;
+    html += `<span class="tree-name">${node.name || nodeId.split(':').pop()}</span>`;
+    html += '</div>';
+
+    if (hasKids) {
+      html += `<div class="tree-children" data-parent="${nodeId}">`;
+      for (const kid of kids) {
+        html += renderNode(kid, depth + 1);
+      }
+      html += '</div>';
+    }
+
+    return html;
+  }
+
+  let html = '';
+  for (const root of roots) {
+    html += renderNode(root, 0);
+  }
+  container.innerHTML = html;
+
+  // Click tree item → select node on graph + pan to it
+  container.querySelectorAll('.tree-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      // Don't trigger if clicking the toggle arrow
+      if (e.target.classList.contains('tree-toggle')) return;
+      const nodeId = item.dataset.nodeId;
+      const node = rawData.nodes.find(n => n.id === nodeId);
+      if (node) {
+        selectNode(node);
+        panToNode(node);
+      }
+      // Highlight in tree
+      container.querySelectorAll('.tree-item').forEach(i => i.classList.remove('tree-selected'));
+      item.classList.add('tree-selected');
+    });
+  });
+
+  // Toggle expand/collapse on arrow click
+  container.querySelectorAll('.tree-toggle.has-children').forEach(toggle => {
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const item = toggle.closest('.tree-item');
+      const nodeId = item.dataset.nodeId;
+      const childrenDiv = container.querySelector(`.tree-children[data-parent="${CSS.escape(nodeId)}"]`);
+      if (childrenDiv) {
+        childrenDiv.classList.toggle('collapsed');
+        toggle.textContent = childrenDiv.classList.contains('collapsed') ? '\u25B6' : '\u25BC';
+      }
+    });
+  });
+}
+
+// -----------------------------------------------------------------------
+// B2: Focal Point Navigation
+// -----------------------------------------------------------------------
+function getFocalSubgraph(nodeId, depth) {
+  // Build adjacency from rawData edges (both directions)
+  const adj = {};
+  for (const e of rawData.edges) {
+    const src = e.source_id || (e.source && e.source.id) || e.source;
+    const tgt = e.target_id || (e.target && e.target.id) || e.target;
+    if (!adj[src]) adj[src] = new Set();
+    if (!adj[tgt]) adj[tgt] = new Set();
+    adj[src].add(tgt);
+    adj[tgt].add(src);
+  }
+
+  // BFS from nodeId
+  const visited = new Set([nodeId]);
+  let frontier = new Set([nodeId]);
+
+  for (let i = 0; i < depth; i++) {
+    const next = new Set();
+    for (const nid of frontier) {
+      for (const neighbor of (adj[nid] || [])) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          next.add(neighbor);
+        }
+      }
+    }
+    frontier = next;
+  }
+
+  return visited;
+}
+
+function focusOnNode(nodeId, depth) {
+  focalNodeId = nodeId;
+  focalDepth = depth || 2;
+  focalNodeSet = getFocalSubgraph(nodeId, focalDepth);
+
+  updateFocalIndicator();
+  updateGraph();
+  updateStats();
+
+  // Pan to the focal node after a short delay for simulation to settle
+  const node = rawData.nodes.find(n => n.id === nodeId);
+  if (node) setTimeout(() => panToNode(node), 300);
+}
+
+function exitFocus() {
+  focalNodeId = null;
+  focalNodeSet = null;
+  updateFocalIndicator();
+  updateGraph();
+  updateStats();
+  checkNodeLimit();
+}
+
+function updateFocalIndicator() {
+  const indicator = document.getElementById('focal-indicator');
+  if (!indicator) return;
+
+  if (focalNodeId) {
+    const node = rawData.nodes.find(n => n.id === focalNodeId);
+    const name = node ? node.name : focalNodeId.split(':').pop();
+    indicator.innerHTML = `
+      <span style="color:#f9ca24;font-weight:600">FOCUS</span>
+      <span style="color:var(--text-primary)">${name}</span>
+      <span style="color:var(--text-muted)">(${focalDepth} hops, ${focalNodeSet ? focalNodeSet.size : '?'} nodes)</span>
+      <button onclick="changeFocalDepth(-1)" style="background:transparent;border:1px solid var(--border);color:var(--text-muted);border-radius:3px;padding:1px 5px;cursor:pointer;font-size:11px">&minus;</button>
+      <button onclick="changeFocalDepth(1)" style="background:transparent;border:1px solid var(--border);color:var(--text-muted);border-radius:3px;padding:1px 5px;cursor:pointer;font-size:11px">+</button>
+      <button onclick="exitFocus()" style="background:#da3633;color:#fff;border:none;border-radius:3px;padding:2px 8px;cursor:pointer;font-size:11px">Exit</button>
+    `;
+    indicator.style.display = 'flex';
+  } else {
+    indicator.style.display = 'none';
+  }
+}
+
+function changeFocalDepth(delta) {
+  if (!focalNodeId) return;
+  const newDepth = Math.max(1, Math.min(5, focalDepth + delta));
+  if (newDepth !== focalDepth) {
+    focusOnNode(focalNodeId, newDepth);
+  }
+}
+
+function panToNode(d) {
+  if (d.x == null || d.y == null) return;
+  const container = document.getElementById('graph-container');
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+
+  const currentTransform = d3.zoomTransform(svg.node());
+  const scale = Math.max(currentTransform.k, 1.2);
+  const newTransform = d3.zoomIdentity
+    .translate(width / 2, height / 2)
+    .scale(scale)
+    .translate(-d.x, -d.y);
+
+  svg.transition().duration(500)
+    .call(d3.zoom().scaleExtent([0.1, 6]).on('zoom', (event) => {
+      g.attr('transform', event.transform);
+    }).transform, newTransform);
+}
+
+// -----------------------------------------------------------------------
+// B3: Layer Toggle
+// -----------------------------------------------------------------------
+const LAYER_PRESETS = {
+  all:        null,  // null = all edge groups enabled
+  structure:  ['structural'],
+  dependency: ['structural', 'data_flow', 'communication', 'routing'],
+  runtime:    ['event_async', 'caching'],
+};
+
+function setViewLayer(layer) {
+  activeLayer = layer;
+  const preset = LAYER_PRESETS[layer];
+
+  if (preset === null) {
+    for (const g of Object.keys(filters.edgeGroup)) filters.edgeGroup[g] = true;
+  } else {
+    for (const g of Object.keys(filters.edgeGroup)) filters.edgeGroup[g] = preset.includes(g);
+  }
+
+  // Update checkbox UI
+  document.querySelectorAll('input[data-filter="edgeGroup"]').forEach(cb => {
+    cb.checked = filters.edgeGroup[cb.dataset.value];
+  });
+
+  // Update button styles
+  document.querySelectorAll('.layer-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.layer === layer);
+  });
+
+  updateGraph();
+  updateStats();
+}
+
+// -----------------------------------------------------------------------
+// B4: Node Limit + Warning
+// -----------------------------------------------------------------------
+function checkNodeLimit() {
+  const warning = document.getElementById('node-limit-warning');
+  if (!warning) return;
+
+  const totalVisible = rawData.nodes.length;
+  if (totalVisible > NODE_LIMIT && !focalNodeId) {
+    // Find a good candidate node to suggest focusing on
+    warning.innerHTML = `
+      <strong>${totalVisible} nodes</strong> in graph (>${NODE_LIMIT} may be slow).
+      <br>Click any node and use <strong>Focus</strong> to zoom in, or filter by tier/type.
+    `;
+    warning.style.display = 'block';
+  } else {
+    warning.style.display = 'none';
+  }
 }
 
 // -----------------------------------------------------------------------
