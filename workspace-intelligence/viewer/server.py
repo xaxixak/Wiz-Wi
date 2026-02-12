@@ -282,6 +282,21 @@ class ViewerHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
 
+        elif parsed.path == "/api/agent-activity":
+            content_len = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_len).decode("utf-8") if content_len > 0 else "{}"
+            data = json.loads(body) if body else {}
+            broadcast_sse("agent-activity", data)
+
+            response = {"received": True}
+            body = json.dumps(response).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+
         elif parsed.path == "/api/watch-stop":
             content_len = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_len).decode("utf-8")

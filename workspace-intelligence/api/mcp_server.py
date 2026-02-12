@@ -21,8 +21,11 @@ Usage:
 import json
 import sys
 import argparse
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.request import Request, urlopen
+from urllib.error import URLError
 
 # Add project root to path so we can import graph_store / ontology
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -339,8 +342,12 @@ def tool_get_context(store: GraphStore, arguments: Dict[str, Any]) -> Dict[str, 
     if detail_level not in ("L1", "L2", "L3"):
         detail_level = "L2"
 
-    # Get context pack from the store
-    context = store.get_context(scope, focus, max_depth=depth)
+    # Map detail level to token budget
+    token_budgets = {"L1": 200, "L2": 1000, "L3": 4000}
+    max_tokens = token_budgets.get(detail_level, 1000)
+
+    # Get context pack from the store with token budget
+    context = store.get_context(scope, focus, max_depth=depth, max_tokens=max_tokens)
 
     # Serialize at the requested detail level
     result: Dict[str, Any] = {
@@ -504,13 +511,54 @@ TOOL_HANDLERS = {
 }
 
 
+_VIEWER_URL = "http://127.0.0.1:8080/api/agent-activity"
+
+def _broadcast_activity(tool_name: str, arguments: Dict[str, Any], result_summary: str):
+    """Broadcast agent activity to viewer (fire-and-forget, non-blocking)."""
+    def _send():
+        try:
+            # Extract the focus target from arguments
+            focus = (
+                arguments.get("node_id")
+                or arguments.get("query")
+                or arguments.get("start_node_id")
+                or "graph"
+            )
+            payload = json.dumps({
+                "type": "agent_activity",
+                "tool": tool_name,
+                "focus": focus,
+                "args": {k: v for k, v in arguments.items() if k != "token_budget"},
+                "summary": result_summary,
+                "source": "mcp_server",
+            }).encode("utf-8")
+            req = Request(_VIEWER_URL, data=payload, method="POST")
+            req.add_header("Content-Type", "application/json")
+            urlopen(req, timeout=2)
+        except (URLError, OSError):
+            pass  # Viewer not running — that's fine
+    threading.Thread(target=_send, daemon=True).start()
+
+
 def call_tool(store: GraphStore, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """Dispatch a tool call to the appropriate handler."""
     handler = TOOL_HANDLERS.get(tool_name)
     if not handler:
         return {"error": f"Unknown tool: '{tool_name}'. Available: {list(TOOL_HANDLERS.keys())}"}
     try:
-        return handler(store, arguments)
+        result = handler(store, arguments)
+        # Broadcast activity to viewer (Oracle v2 pattern: agent uses tool → WI sees it)
+        summary = ""
+        if "matches" in result:
+            summary = f"{len(result['matches'])} matches"
+        elif "nodes" in result:
+            summary = f"{len(result['nodes'])} nodes"
+        elif "total_nodes" in result:
+            summary = f"{result['total_nodes']} nodes, {result['total_edges']} edges"
+        elif "affected_nodes" in result:
+            summary = f"{len(result['affected_nodes'])} affected"
+        _broadcast_activity(tool_name, arguments, summary)
+        return result
     except Exception as exc:
         return {"error": f"Tool '{tool_name}' failed: {str(exc)}"}
 

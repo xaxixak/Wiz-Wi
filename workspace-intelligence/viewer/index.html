@@ -415,6 +415,60 @@ body {
   background: rgba(255,107,107,0.3);
 }
 
+/* --- Agent activity log panel --- */
+#agent-log {
+  display: none;
+  flex-direction: column;
+  gap: 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+#agent-log.has-events { display: flex; }
+
+.agent-log-entry {
+  font-size: 11px;
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(160,120,255,0.1);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.agent-log-entry:hover { background: rgba(160,120,255,0.1); }
+
+.agent-log-entry .ale-time {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-right: 6px;
+}
+
+.agent-log-entry .ale-tool {
+  font-weight: 600;
+  color: #a078ff;
+  margin-right: 4px;
+}
+
+.agent-log-entry .ale-focus {
+  color: #f9ca24;
+}
+
+.agent-log-entry .ale-summary {
+  color: var(--text-muted);
+  font-size: 10px;
+  display: block;
+  margin-top: 2px;
+}
+
+@keyframes agent-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(160,120,255,0.6); }
+  70% { box-shadow: 0 0 0 8px rgba(160,120,255,0); }
+  100% { box-shadow: 0 0 0 0 rgba(160,120,255,0); }
+}
+
+.agent-active-node {
+  animation: agent-pulse 1.5s ease-out 3;
+}
+
 /* --- Scrollbar --- */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -613,6 +667,13 @@ body {
         <button onclick="toggleAll('edgeGroup', false)">None</button>
       </div>
       <div class="filter-group" id="edge-group-filters"></div>
+    </div>
+
+    <!-- Agent activity log -->
+    <div class="filter-section">
+      <h3 style="color:#a078ff">Agent Activity</h3>
+      <div id="agent-log"></div>
+      <div id="agent-log-empty" style="font-size:11px;color:var(--text-muted);font-style:italic;">No agent activity yet (connect via MCP)</div>
     </div>
 
     <!-- Runtime activity log -->
@@ -2024,6 +2085,162 @@ function initRuntimeLayer() {
 }
 
 // -----------------------------------------------------------------------
+// Agent Activity Layer (Oracle v2 pattern)
+// -----------------------------------------------------------------------
+let _agentEventCount = 0;
+const MAX_AGENT_LOG = 30;
+
+function initAgentActivityLayer() {
+  if (!_eventSource) return;
+
+  _eventSource.addEventListener('agent-activity', (e) => {
+    const data = JSON.parse(e.data);
+    console.log('[AGENT]', data.tool, data.focus);
+
+    // Find matching nodes for the focus target
+    const matchedNodes = findAgentFocusNodes(data.focus, data.args);
+
+    // Highlight nodes on graph
+    if (matchedNodes.size > 0) {
+      showAgentPulse(matchedNodes);
+      // Auto-focus if in focal mode
+      if (focalNodeId && matchedNodes.size > 0) {
+        const firstMatch = [...matchedNodes][0];
+        const node = rawData.nodes.find(n => n.id === firstMatch);
+        if (node) panToNode(node);
+      }
+    }
+
+    // Show in log
+    addAgentLogEntry(data, matchedNodes);
+
+    // Show banner
+    showAgentBanner(data);
+
+    _agentEventCount++;
+  });
+}
+
+function findAgentFocusNodes(focus, args) {
+  const matched = new Set();
+  if (!focus || focus === 'graph') return matched;
+
+  const query = focus.toLowerCase();
+
+  for (const node of rawData.nodes) {
+    // Match by name
+    if (node.name && node.name.toLowerCase().includes(query)) {
+      matched.add(node.id);
+    }
+    // Match by id
+    if (node.id && node.id.toLowerCase().includes(query)) {
+      matched.add(node.id);
+    }
+  }
+
+  // Also check node_id from args (traverse, impact)
+  if (args && args.node_id) {
+    matched.add(args.node_id);
+  }
+  if (args && args.start_node_id) {
+    matched.add(args.start_node_id);
+  }
+
+  return matched;
+}
+
+function showAgentPulse(nodeIds) {
+  nodeG.selectAll('.node-group').each(function(d) {
+    if (nodeIds.has(d.id)) {
+      const el = d3.select(this);
+      el.classed('agent-active-node', true);
+      // Remove after animation
+      setTimeout(() => el.classed('agent-active-node', false), 4500);
+    }
+  });
+}
+
+let _agentBanner = null;
+function showAgentBanner(data) {
+  if (!_agentBanner) {
+    _agentBanner = document.createElement('div');
+    _agentBanner.id = 'agent-banner';
+    _agentBanner.style.cssText = `
+      position: fixed; top: 48px; right: 8px; z-index: 1000;
+      background: #1a1a2e; border: 1px solid #a078ff; border-radius: 8px;
+      padding: 8px 14px; color: #a078ff; font-size: 12px;
+      font-family: monospace; opacity: 0; transition: opacity 0.3s;
+      pointer-events: none; max-width: 360px;
+    `;
+    document.body.appendChild(_agentBanner);
+  }
+
+  const toolColors = {
+    search_entity: '#f9ca24',
+    traverse_graph: '#4ecca3',
+    get_context: '#a078ff',
+    impact_analysis: '#e94560',
+    get_stats: '#54a0ff',
+  };
+  const color = toolColors[data.tool] || '#a078ff';
+
+  _agentBanner.innerHTML = `
+    <span style="color:${color}">[AGENT]</span>
+    <span style="color:#fff">${data.tool}</span>
+    <span style="color:#f9ca24">${data.focus || ''}</span>
+    ${data.summary ? `<span style="color:var(--text-muted)"> (${data.summary})</span>` : ''}
+  `;
+  _agentBanner.style.opacity = '1';
+  setTimeout(() => { _agentBanner.style.opacity = '0'; }, 4000);
+}
+
+function addAgentLogEntry(data, matchedNodeIds) {
+  const log = document.getElementById('agent-log');
+  const emptyMsg = document.getElementById('agent-log-empty');
+
+  const entry = document.createElement('div');
+  entry.className = 'agent-log-entry';
+
+  const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  let nodesHtml = '';
+  if (matchedNodeIds.size > 0) {
+    const tags = [...matchedNodeIds].slice(0, 5).map(id => {
+      const node = rawData.nodes.find(n => n.id === id);
+      const name = node ? node.name : id.split(':').pop();
+      return `<span class="rle-node-tag" style="color:#a078ff;background:rgba(160,120,255,0.15);border-color:rgba(160,120,255,0.3)" onclick="selectNodeById('${id}')">${name}</span>`;
+    }).join('');
+    nodesHtml = `<span class="ale-summary">${tags}</span>`;
+  }
+
+  entry.innerHTML = `
+    <span class="ale-time">${time}</span>
+    <span class="ale-tool">${data.tool}</span>
+    <span class="ale-focus">${data.focus || ''}</span>
+    ${data.summary ? `<span style="color:var(--text-muted)"> ${data.summary}</span>` : ''}
+    ${nodesHtml}
+  `;
+
+  // Click to focus on matched nodes
+  if (matchedNodeIds.size > 0) {
+    entry.addEventListener('click', () => {
+      const firstId = [...matchedNodeIds][0];
+      const node = rawData.nodes.find(n => n.id === firstId);
+      if (node) panToNode(node);
+    });
+  }
+
+  log.prepend(entry);
+  log.classList.add('has-events');
+  if (emptyMsg) emptyMsg.style.display = 'none';
+
+  // Limit entries
+  while (log.children.length > MAX_AGENT_LOG) {
+    log.removeChild(log.lastChild);
+  }
+}
+
+// -----------------------------------------------------------------------
 // B1: Tree/Hierarchy View
 // -----------------------------------------------------------------------
 function buildTreeView() {
@@ -2483,6 +2700,7 @@ function toggleWatchMode() {
 loadData();
 initLiveUpdates();
 initRuntimeLayer();
+initAgentActivityLayer();
 
 </script>
 </body>
