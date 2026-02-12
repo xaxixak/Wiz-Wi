@@ -803,6 +803,7 @@ let selectedNodeId = null;
 let focalNodeId = null;
 let focalDepth = 2;
 let focalNodeSet = null;  // Set of node IDs in focal subgraph
+let focalHistory = [];  // Navigation history (breadcrumb trail)
 let activeLayer = 'all';
 const NODE_LIMIT = 150;
 
@@ -2170,7 +2171,17 @@ function getFocalSubgraph(nodeId, depth) {
   return visited;
 }
 
-function focusOnNode(nodeId, depth) {
+function focusOnNode(nodeId, depth, fromHistory) {
+  // Add to navigation history (unless navigating via history)
+  if (!fromHistory) {
+    // If we're going to a new node (not just changing depth), add to history
+    if (focalNodeId !== nodeId) {
+      focalHistory.push({ nodeId, depth: depth || focalDepth });
+      // Keep history limited to last 20 items
+      if (focalHistory.length > 20) focalHistory.shift();
+    }
+  }
+
   focalNodeId = nodeId;
   focalDepth = depth || 2;
   focalNodeSet = getFocalSubgraph(nodeId, focalDepth);
@@ -2187,6 +2198,7 @@ function focusOnNode(nodeId, depth) {
 function exitFocus() {
   focalNodeId = null;
   focalNodeSet = null;
+  focalHistory = [];  // Clear navigation history
   updateFocalIndicator();
   updateGraph();
   updateStats();
@@ -2200,13 +2212,40 @@ function updateFocalIndicator() {
   if (focalNodeId) {
     const node = rawData.nodes.find(n => n.id === focalNodeId);
     const name = node ? node.name : focalNodeId.split(':').pop();
+
+    // Build breadcrumb trail (show last 5 items)
+    let breadcrumbHTML = '';
+    if (focalHistory.length > 1) {
+      const recentHistory = focalHistory.slice(-5);
+      breadcrumbHTML = '<div style="font-size:10px;color:var(--text-muted);margin-top:4px;display:flex;align-items:center;gap:4px;flex-wrap:wrap">';
+      breadcrumbHTML += '<span>Path:</span>';
+      for (let i = 0; i < recentHistory.length; i++) {
+        const item = recentHistory[i];
+        const itemNode = rawData.nodes.find(n => n.id === item.nodeId);
+        const itemName = itemNode ? itemNode.name : item.nodeId.split(':').pop();
+        const isCurrent = i === recentHistory.length - 1;
+
+        if (i > 0) breadcrumbHTML += '<span style="color:#666">\u2192</span>';
+
+        if (isCurrent) {
+          breadcrumbHTML += `<span style="color:#f9ca24">${itemName}</span>`;
+        } else {
+          breadcrumbHTML += `<a href="#" onclick="jumpToHistoryItem(${i}); return false;" style="color:var(--text-muted);text-decoration:underline;cursor:pointer">${itemName}</a>`;
+        }
+      }
+      breadcrumbHTML += '</div>';
+    }
+
     indicator.innerHTML = `
-      <span style="color:#f9ca24;font-weight:600">FOCUS</span>
-      <span style="color:var(--text-primary)">${name}</span>
-      <span style="color:var(--text-muted)">(${focalDepth} hops, ${focalNodeSet ? focalNodeSet.size : '?'} nodes)</span>
-      <button onclick="changeFocalDepth(-1)" style="background:transparent;border:1px solid var(--border);color:var(--text-muted);border-radius:3px;padding:1px 5px;cursor:pointer;font-size:11px">&minus;</button>
-      <button onclick="changeFocalDepth(1)" style="background:transparent;border:1px solid var(--border);color:var(--text-muted);border-radius:3px;padding:1px 5px;cursor:pointer;font-size:11px">+</button>
-      <button onclick="exitFocus()" style="background:#da3633;color:#fff;border:none;border-radius:3px;padding:2px 8px;cursor:pointer;font-size:11px">Exit</button>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="color:#f9ca24;font-weight:600">FOCUS</span>
+        <span style="color:var(--text-primary)">${name}</span>
+        <span style="color:var(--text-muted)">(${focalDepth} hops, ${focalNodeSet ? focalNodeSet.size : '?'} nodes)</span>
+        <button onclick="changeFocalDepth(-1)" style="background:transparent;border:1px solid var(--border);color:var(--text-muted);border-radius:3px;padding:1px 5px;cursor:pointer;font-size:11px">&minus;</button>
+        <button onclick="changeFocalDepth(1)" style="background:transparent;border:1px solid var(--border);color:var(--text-muted);border-radius:3px;padding:1px 5px;cursor:pointer;font-size:11px">+</button>
+        <button onclick="exitFocus()" style="background:#da3633;color:#fff;border:none;border-radius:3px;padding:2px 8px;cursor:pointer;font-size:11px">Exit</button>
+      </div>
+      ${breadcrumbHTML}
     `;
     indicator.style.display = 'flex';
   } else {
@@ -2220,6 +2259,19 @@ function changeFocalDepth(delta) {
   if (newDepth !== focalDepth) {
     focusOnNode(focalNodeId, newDepth);
   }
+}
+
+function jumpToHistoryItem(index) {
+  const recentHistory = focalHistory.slice(-5);
+  if (index < 0 || index >= recentHistory.length) return;
+
+  const item = recentHistory[index];
+  // Trim history to this point (remove items after clicked item)
+  const actualIndex = focalHistory.length - (recentHistory.length - index);
+  focalHistory = focalHistory.slice(0, actualIndex + 1);
+
+  // Navigate to this point (mark as fromHistory to avoid adding duplicate)
+  focusOnNode(item.nodeId, item.depth, true);
 }
 
 function panToNode(d) {
