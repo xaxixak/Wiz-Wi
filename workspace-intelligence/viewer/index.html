@@ -13,13 +13,13 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg-primary:   #1a1a2e;
-  --bg-secondary: #16213e;
-  --bg-panel:     #0f3460;
+  --bg-primary:   #000000;
+  --bg-secondary: #0a0a0a;
+  --bg-panel:     #111111;
   --text-primary: #e0e0e0;
   --text-muted:   #8899aa;
   --accent:       #4A90D9;
-  --border:       #2a3a5e;
+  --border:       #222222;
   --tier-macro:   #4A90D9;
   --tier-meso:    #50C878;
   --tier-micro:   #FF8C42;
@@ -54,6 +54,7 @@ body {
   align-items: center;
   gap: 16px;
   border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(10px);
 }
 
 .sidebar-toggle {
@@ -69,15 +70,21 @@ body {
 
 #search-box {
   flex: 0 0 260px;
-  padding: 6px 10px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  padding: 7px 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
   color: var(--text-primary);
   font-size: 13px;
+  transition: all 0.2s ease;
 }
-#search-box:focus { outline: none; border-color: var(--accent); }
-#search-box::placeholder { color: var(--text-muted); }
+#search-box:focus {
+  outline: none;
+  border-color: rgba(88,166,255,0.4);
+  background: rgba(255,255,255,0.06);
+  box-shadow: 0 0 12px rgba(88,166,255,0.1);
+}
+#search-box::placeholder { color: rgba(255,255,255,0.25); }
 
 .toolbar-stats {
   font-size: 12px;
@@ -167,14 +174,15 @@ body {
   top: 0; right: 0;
   width: 340px;
   height: 100vh;
-  background: var(--bg-secondary);
-  border-left: 1px solid var(--border);
+  background: rgba(10, 10, 10, 0.92);
+  border-left: 1px solid rgba(255,255,255,0.08);
   transform: translateX(100%);
-  transition: transform 0.25s ease;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   z-index: 1500;
   display: flex;
   flex-direction: column;
-  box-shadow: -4px 0 20px rgba(0,0,0,0.3);
+  box-shadow: -8px 0 40px rgba(0,0,0,0.6);
+  backdrop-filter: blur(16px);
 }
 #detail-drawer.open { transform: translateX(0); }
 .drawer-header {
@@ -230,7 +238,7 @@ body {
 #graph-container {
   position: relative;
   overflow: hidden;
-  background: var(--bg-primary);
+  background: radial-gradient(ellipse at 50% 40%, #060612 0%, #000000 70%);
 }
 
 #graph-container svg {
@@ -238,25 +246,56 @@ body {
   height: 100%;
 }
 
+
+/* Smooth transform on zoom group */
+.nodes, .links, .hulls {
+  will-change: transform;
+}
+
 /* --- SVG styling --- */
-.node-group { cursor: pointer; }
-.node-group:hover .node-shape { filter: brightness(1.3); }
+.node-group {
+  cursor: pointer;
+  transition: opacity 0.3s ease;
+}
+.node-shape {
+  transition: filter 0.25s ease, stroke-width 0.2s ease, transform 0.2s ease;
+}
+.node-group:hover .node-shape {
+  filter: url(#glow-hover) !important;
+  stroke-width: 2.5 !important;
+  stroke: rgba(255,255,255,0.7) !important;
+}
+.node-group:hover { transform-origin: center; }
+
+/* Focus dimming: when a node is selected, dim everything else */
+.graph-has-selection .node-group { opacity: 0.12; transition: opacity 0.4s ease; }
+.graph-has-selection .edge-group { opacity: 0.03 !important; transition: opacity 0.4s ease; }
+.graph-has-selection .node-group.node-connected { opacity: 0.9; }
+.graph-has-selection .edge-group.edge-connected { opacity: 0.75 !important; }
+.graph-has-selection .node-group.node-selected { opacity: 1; }
 
 .node-label {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 10px;
-  fill: var(--text-primary);
+  fill: #e6edf3;
   text-anchor: middle;
   pointer-events: none;
   user-select: none;
+  paint-order: stroke;
+  stroke: #000000;
+  stroke-width: 3px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
-.node-label-macro { font-size: 13px; font-weight: 700; fill: #fff; }
-.node-label-meso  { font-size: 11px; font-weight: 500; }
+.node-label-macro { font-size: 14px; font-weight: 700; fill: #fff; stroke-width: 4px; }
+.node-label-meso  { font-size: 11px; font-weight: 600; fill: #e6edf3; }
 
 .edge-line {
   fill: none;
   stroke-width: 1;
+  transition: stroke-width 0.2s, opacity 0.2s;
 }
-.edge-line.edge-structural { stroke-width: 0.6; opacity: 0.35; }
+.edge-line.edge-structural { stroke-width: 1.0; }
 .edge-line.edge-data_flow { stroke-width: 1.8; }
 .edge-line.edge-communication { stroke-width: 1.8; }
 .edge-line.edge-event_async { stroke-width: 1.5; }
@@ -265,35 +304,48 @@ body {
 
 .edge-label {
   font-size: 9px;
-  fill: var(--text-muted);
+  fill: #e6edf3;
   pointer-events: none;
   opacity: 0;
   user-select: none;
+  paint-order: stroke;
+  stroke: #000;
+  stroke-width: 2.5px;
+  stroke-linejoin: round;
+  transition: opacity 0.2s;
 }
 
 .edge-group:hover .edge-label { opacity: 1; }
-.edge-group:hover .edge-line { stroke-width: 2.5; }
+.edge-group:hover .edge-line { stroke-width: 2.5 !important; opacity: 1 !important; }
 
 /* --- Tooltip --- */
 .tooltip {
   position: absolute;
-  background: rgba(15, 52, 96, 0.95);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 6px 10px;
+  background: rgba(10, 10, 10, 0.92);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 8px 12px;
   font-size: 12px;
   pointer-events: none;
   z-index: 100;
   max-width: 300px;
   display: none;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
 }
-.tooltip .tt-name { font-weight: 600; }
+.tooltip .tt-name { font-weight: 600; color: #fff; }
 .tooltip .tt-type { color: var(--text-muted); font-size: 11px; }
 
 /* --- Selected node highlight --- */
 .node-selected .node-shape {
   stroke: #fff !important;
   stroke-width: 3 !important;
+  filter: url(#glow-select) !important;
+}
+.node-selected .node-label {
+  fill: #fff !important;
+  font-weight: 700 !important;
+  opacity: 1 !important;
 }
 
 /* --- Live update node highlights --- */
@@ -557,28 +609,58 @@ body {
 /* --- Layer toggle --- */
 .layer-btn {
   font-size: 11px;
-  padding: 3px 8px;
+  padding: 4px 10px;
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255,255,255,0.1);
   color: var(--text-muted);
-  border-radius: 3px;
+  border-radius: 6px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.2s ease;
+  letter-spacing: 0.3px;
 }
-.layer-btn:hover { background: rgba(255,255,255,0.05); color: var(--text-primary); }
-.layer-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.layer-btn:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-primary);
+  border-color: rgba(255,255,255,0.2);
+}
+.layer-btn.active {
+  background: rgba(88, 166, 255, 0.15);
+  color: #58A6FF;
+  border-color: rgba(88, 166, 255, 0.4);
+  box-shadow: 0 0 12px rgba(88, 166, 255, 0.15);
+}
+.sublayout-toggle {
+  display: none; gap: 2px; margin-left: 2px;
+}
+.sublayout-toggle.visible { display: inline-flex; }
+.sublayout-btn {
+  font-size: 10px; padding: 2px 7px;
+  background: transparent; border: 1px solid rgba(255,255,255,0.08);
+  color: var(--text-muted); border-radius: 4px; cursor: pointer;
+  transition: all 0.2s ease;
+}
+.sublayout-btn:hover { background: rgba(255,255,255,0.06); color: var(--text-primary); }
+.sublayout-btn.active {
+  background: rgba(88, 166, 255, 0.12); color: #58A6FF;
+  border-color: rgba(88, 166, 255, 0.3);
+}
 
 /* --- Focus buttons --- */
 .focus-btn {
   font-size: 11px;
-  padding: 3px 8px;
-  background: rgba(249,202,36,0.15);
-  border: 1px solid rgba(249,202,36,0.4);
-  color: #f9ca24;
-  border-radius: 3px;
+  padding: 4px 10px;
+  background: rgba(249,191,36,0.1);
+  border: 1px solid rgba(249,191,36,0.3);
+  color: #fbbf24;
+  border-radius: 6px;
   cursor: pointer;
+  transition: all 0.2s ease;
 }
-.focus-btn:hover { background: rgba(249,202,36,0.3); }
+.focus-btn:hover {
+  background: rgba(249,191,36,0.2);
+  border-color: rgba(249,191,36,0.5);
+  box-shadow: 0 0 10px rgba(249,191,36,0.15);
+}
 
 /* --- Tree view --- */
 .tree-item {
@@ -775,10 +857,6 @@ body {
 .replay-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.05); }
 .replay-btn.active { background: #9B59B6; color: #fff; border-color: #9B59B6; pointer-events: none; }
 
-@keyframes orphan-pulse {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
-}
 </style>
 </head>
 <body>
@@ -813,6 +891,10 @@ body {
       <div class="layer-toggle" style="display:flex;gap:4px;">
         <button class="layer-btn active" data-layer="all" onclick="setViewLayer('all')" title="Show all nodes and edges">All</button>
         <button class="layer-btn" data-layer="structure" onclick="setViewLayer('structure')" title="Show only folders, files, and CONTAINS edges">Structure</button>
+        <span id="struct-sublayout" class="sublayout-toggle">
+          <button class="sublayout-btn active" data-sublayout="radial" onclick="setStructLayout('radial')">Circle</button>
+          <button class="sublayout-btn" data-sublayout="tree" onclick="setStructLayout('tree')">Tree</button>
+        </span>
         <button class="layer-btn" data-layer="dependency" onclick="setViewLayer('dependency')" title="Show files, functions, and IMPORTS/CALLS edges">Dependency</button>
         <button class="layer-btn" data-layer="runtime" onclick="setViewLayer('runtime')" title="Show runtime execution paths and events">Runtime</button>
       </div>
@@ -829,8 +911,6 @@ body {
       <!-- 3D Layout Modes (hidden in 2D) -->
       <div id="layout-toggle-container" class="layout-toggle-group" style="display:none">
         <button class="layout-toggle-btn active" data-layout="tree" onclick="set3DLayout('tree')">Tree</button>
-        <button class="layout-toggle-btn" data-layout="zones" onclick="set3DLayout('zones')">Zones</button>
-        <button class="layout-toggle-btn" data-layout="flat" onclick="set3DLayout('flat')">Flat</button>
       </div>
 
       <!-- Replay (3D only) -->
@@ -929,11 +1009,15 @@ body {
         <span style="color:#9B59B6">Sphere Mode</span>
       </div>
       <div class="hud-row">
-        <input type="checkbox" id="hud-show-links" onchange="hudUpdate()">
+        <input type="checkbox" id="hud-show-links" checked onchange="hudUpdate()">
         <span>Show All Links</span>
       </div>
-      <label>Camera Distance: <span id="hud-cam-val">15</span>
-        <input type="range" id="hud-cam-dist" min="5" max="60" value="15" step="1" oninput="hudUpdate()">
+      <div class="hud-row">
+        <input type="checkbox" id="hud-show-labels" checked onchange="hudUpdate()">
+        <span>Show Labels</span>
+      </div>
+      <label>Camera Distance: <span id="hud-cam-val">18</span>
+        <input type="range" id="hud-cam-dist" min="3" max="120" value="18" step="1" oninput="hudUpdate()">
       </label>
       <label>Node Size: <span id="hud-size-val">1.0</span>
         <input type="range" id="hud-node-size" min="0.3" max="3" value="1" step="0.1" oninput="hudUpdate()">
@@ -941,11 +1025,11 @@ body {
       <label>Breathing: <span id="hud-breath-val">0.05</span>
         <input type="range" id="hud-breathing" min="0" max="0.2" value="0.05" step="0.01" oninput="hudUpdate()">
       </label>
-      <label>Rotation Speed: <span id="hud-rot-val">0.02</span>
-        <input type="range" id="hud-rotation" min="0" max="0.1" value="0.02" step="0.005" oninput="hudUpdate()">
+      <label>Rotation Speed: <span id="hud-rot-val">0.000</span>
+        <input type="range" id="hud-rotation" min="0" max="0.1" value="0" step="0.005" oninput="hudUpdate()">
       </label>
-      <label>Link Opacity: <span id="hud-link-val">0.15</span>
-        <input type="range" id="hud-link-opacity" min="0" max="0.5" value="0.15" step="0.01" oninput="hudUpdate()">
+      <label>Link Opacity: <span id="hud-link-val">0.35</span>
+        <input type="range" id="hud-link-opacity" min="0" max="0.8" value="0.35" step="0.01" oninput="hudUpdate()">
       </label>
       <label>Particle Speed: <span id="hud-part-val">0.3</span>
         <input type="range" id="hud-particle" min="0.1" max="1" value="0.3" step="0.05" oninput="hudUpdate()">
@@ -1141,29 +1225,33 @@ const TIER_COLORS = {
 
 // Per-type colors for richer visual differentiation
 const TYPE_COLORS = {
-  // macro — blues/purples (large, authoritative)
-  Workspace:   '#2C5F9E',
-  Project:     '#3A7BD5',
-  Service:     '#5B8FDB',
-  Resource:    '#7B68EE',
-  ExternalAPI: '#6A5ACD',
-  // meso — greens/teals (mid-level structure)
-  Module:      '#2EAD6A',
-  File:        '#45B87F',
-  Router:      '#20B2AA',
-  Collection:  '#3CB4A0',
-  InfraConfig: '#5F9EA0',
-  Queue:       '#48A9A6',
-  // micro — warm tones (leaf-level detail)
-  Endpoint:    '#E8853D',
-  Function:    '#D4703F',
-  AsyncHandler:'#C0673F',
-  DataModel:   '#E6A552',
-  Event:       '#D98EC0',
-  Middleware:  '#CD853F',
-  TypeDef:     '#BC8F8F',
-  CacheKey:    '#DAA520',
-  EnvVar:      '#B8860B',
+  // Structural — regal purple (top-level, stands out)
+  Workspace:   '#8b5cf6',
+  Project:     '#a78bfa',
+  Service:     '#7c3aed',
+  // Files — blue (universal dev convention)
+  Module:      '#3b82f6',
+  File:        '#60a5fa',
+  // Logic — warm orange (active code, "fire")
+  Function:    '#f97316',
+  AsyncHandler:'#fb923c',
+  Middleware:  '#eab308',
+  // API — green/teal (entry points, "go")
+  Endpoint:    '#22c55e',
+  Router:      '#06b6d4',
+  ExternalAPI: '#14b8a6',
+  // Data — pink/magenta (distinct from code)
+  DataModel:   '#ec4899',
+  Collection:  '#f472b6',
+  TypeDef:     '#d946ef',
+  // Events — purple-pink (signals)
+  Event:       '#a855f7',
+  Queue:       '#64748b',
+  // Infra — neutral gray family
+  Resource:    '#6b7280',
+  InfraConfig: '#9ca3af',
+  EnvVar:      '#78716c',
+  CacheKey:    '#fbbf24',
 };
 
 // Tier lookup matching ontology.py NODE_TIER
@@ -1184,24 +1272,24 @@ const DATA_TYPES  = new Set(['DataModel', 'Collection', 'TypeDef', 'CacheKey']);
 // Type-based X zone positions (fraction of width) for auto-arrangement
 // Flow: Structure → Files → Logic → Communication → Data → Infra
 const TYPE_ZONE = {
-  // Structure (far left) — the backbone
-  Workspace: 0.10, Project: 0.14, Service: 0.18,
-  // Files & Modules (left-center) — containers
-  Module: 0.28, File: 0.34,
-  // Logic (center) — the code
-  Function: 0.48, AsyncHandler: 0.52, Middleware: 0.44,
-  // Communication (center-right) — API surface
-  Endpoint: 0.62, Router: 0.58, ExternalAPI: 0.68,
-  // Data & Events (right) — state
-  DataModel: 0.78, Collection: 0.76, TypeDef: 0.80, Event: 0.74, Queue: 0.72,
-  // Infra (far right) — environment
-  Resource: 0.88, InfraConfig: 0.90, EnvVar: 0.92, CacheKey: 0.86,
+  // Structure (far left, 0.05-0.12) — backbone
+  Workspace: 0.06, Project: 0.09, Service: 0.12,
+  // Files (left, 0.22-0.28) — containers
+  Module: 0.22, File: 0.28,
+  // Logic (center-left, 0.40-0.48) — active code
+  Function: 0.42, AsyncHandler: 0.46, Middleware: 0.40,
+  // API (center-right, 0.58-0.66) — network surface
+  Endpoint: 0.60, Router: 0.58, ExternalAPI: 0.66,
+  // Data+Events (right, 0.74-0.82) — state
+  DataModel: 0.76, Collection: 0.74, TypeDef: 0.78, Event: 0.80, Queue: 0.82,
+  // Infra (far right, 0.90-0.96) — environment
+  Resource: 0.91, InfraConfig: 0.93, EnvVar: 0.95, CacheKey: 0.90,
 };
 
 // Zone labels for display (category name → X fraction)
 const ZONE_LABELS = {
-  'Structure': 0.14, 'Files': 0.31, 'Logic': 0.48,
-  'API': 0.63, 'Data': 0.76, 'Infra': 0.89,
+  'Structure': 0.08, 'Files': 0.25, 'Logic': 0.43,
+  'API': 0.62, 'Data': 0.78, 'Infra': 0.92,
 };
 // Everything else is "code" category -> circle
 
@@ -1225,14 +1313,14 @@ for (const [group, types] of Object.entries(EDGE_GROUPS)) {
 
 // Edge group colors — structural muted, dependencies vivid
 const EDGE_GROUP_COLORS = {
-  structural:    '#555555',
-  data_flow:     '#5DADE2',
-  communication: '#3498DB',
-  event_async:   '#BB8FCE',
-  caching:       '#F0B27A',
-  routing:       '#58D68D',
-  config_deploy: '#6C7A89',
-  quality:       '#F4D03F',
+  structural:    '#30363d',
+  data_flow:     '#ec4899',
+  communication: '#3b82f6',
+  event_async:   '#a855f7',
+  caching:       '#fbbf24',
+  routing:       '#22c55e',
+  config_deploy: '#6b7280',
+  quality:       '#eab308',
 };
 
 // -----------------------------------------------------------------------
@@ -1250,7 +1338,9 @@ let focalDepth = 2;
 let focalNodeSet = null;  // Set of node IDs in focal subgraph
 let focalHistory = [];  // Navigation history (breadcrumb trail)
 let activeLayer = 'all';
+let structLayout = 'radial';   // 'radial' or 'tree'
 const NODE_LIMIT = 150;
+let nodeDepthMap = new Map();   // containment depth per node (computed once)
 
 const filters = {
   tier:      { macro: true, meso: true, micro: true },
@@ -1328,6 +1418,15 @@ async function loadData(graphPathOverride) {
       node.tier = NODE_TIER[node.type] || 'micro';
     }
   }
+
+  // Compute containment depth for all nodes (used for sizing in ALL modes)
+  nodeDepthMap = new Map();
+  const { children: _ch, roots: _roots } = buildContainmentHierarchy(rawData.nodes, rawData.edges);
+  function _assignDepth(nid, d) {
+    nodeDepthMap.set(nid, d);
+    for (const cid of (_ch.get(nid) || [])) _assignDepth(cid, d + 1);
+  }
+  _roots.forEach(r => _assignDepth(r, 0));
 
   // Initialize filters with all observed types checked
   const nodeTypes = new Set(rawData.nodes.map(n => n.type));
@@ -1451,87 +1550,142 @@ function initGraph() {
     .attr('width', width)
     .attr('height', height);
 
-  // Arrow marker definitions
+  // SVG definitions: filters, gradients, markers
   const defs = svg.append('defs');
 
+  // --- Glow filters (Obsidian-style bloom) ---
+  // Macro glow: strong, colorful bloom with double layer
+  const glowMacro = defs.append('filter').attr('id', 'glow-macro')
+    .attr('x', '-80%').attr('y', '-80%').attr('width', '260%').attr('height', '260%');
+  glowMacro.append('feGaussianBlur').attr('in', 'SourceGraphic').attr('stdDeviation', '10').attr('result', 'blur1');
+  glowMacro.append('feGaussianBlur').attr('in', 'SourceGraphic').attr('stdDeviation', '3').attr('result', 'blur2');
+  const glowMacroMerge = glowMacro.append('feMerge');
+  glowMacroMerge.append('feMergeNode').attr('in', 'blur1');
+  glowMacroMerge.append('feMergeNode').attr('in', 'blur2');
+  glowMacroMerge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+  // Meso glow: subtle
+  const glowMeso = defs.append('filter').attr('id', 'glow-meso')
+    .attr('x', '-40%').attr('y', '-40%').attr('width', '180%').attr('height', '180%');
+  glowMeso.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'blur');
+  glowMeso.append('feComposite').attr('in', 'SourceGraphic').attr('in2', 'blur').attr('operator', 'over');
+
+  // Selection glow: bright white halo
+  const glowSelect = defs.append('filter').attr('id', 'glow-select')
+    .attr('x', '-60%').attr('y', '-60%').attr('width', '220%').attr('height', '220%');
+  glowSelect.append('feGaussianBlur').attr('stdDeviation', '8').attr('result', 'blur');
+  glowSelect.append('feComposite').attr('in', 'SourceGraphic').attr('in2', 'blur').attr('operator', 'over');
+
+  // Hover glow
+  const glowHover = defs.append('filter').attr('id', 'glow-hover')
+    .attr('x', '-50%').attr('y', '-50%').attr('width', '200%').attr('height', '200%');
+  glowHover.append('feGaussianBlur').attr('stdDeviation', '5').attr('result', 'blur');
+  glowHover.append('feComposite').attr('in', 'SourceGraphic').attr('in2', 'blur').attr('operator', 'over');
+
+  // --- Radial gradient for node depth (highlight on top-left) ---
+  for (const [typeName, color] of Object.entries(TYPE_COLORS)) {
+    const grad = defs.append('radialGradient')
+      .attr('id', `grad-${typeName}`)
+      .attr('cx', '35%').attr('cy', '35%').attr('r', '65%');
+    // Bright highlight spot
+    grad.append('stop').attr('offset', '0%').attr('stop-color', '#fff').attr('stop-opacity', '0.25');
+    // Main color
+    grad.append('stop').attr('offset', '45%').attr('stop-color', color).attr('stop-opacity', '1');
+    // Darker rim
+    grad.append('stop').attr('offset', '100%').attr('stop-color', color).attr('stop-opacity', '0.7');
+  }
+
+  // --- Arrow markers ---
   for (const [group, color] of Object.entries(EDGE_GROUP_COLORS)) {
     defs.append('marker')
       .attr('id', `arrow-${group}`)
       .attr('viewBox', '0 -5 10 10')
       .attr('refX', 20)
       .attr('refY', 0)
-      .attr('markerWidth', 6)
-      .attr('markerHeight', 6)
+      .attr('markerWidth', 5)
+      .attr('markerHeight', 5)
       .attr('orient', 'auto')
       .append('path')
-        .attr('d', 'M0,-4L8,0L0,4')
+        .attr('d', 'M0,-3.5L7,0L0,3.5')
         .attr('fill', color);
   }
 
-  // Zone background labels (fixed, behind everything)
-  const zoneG = svg.append('g').attr('class', 'zone-labels');
+  // Root group for zoom/pan
+  g = svg.append('g');
+
+  // Zone background labels (inside zoom group so they pan/zoom with graph)
+  const zoneG = g.append('g').attr('class', 'zone-labels');
   for (const [label, xFrac] of Object.entries(ZONE_LABELS)) {
     zoneG.append('text')
       .attr('x', width * xFrac)
-      .attr('y', 30)
+      .attr('y', 50)
       .attr('text-anchor', 'middle')
-      .attr('fill', 'rgba(255,255,255,0.08)')
-      .attr('font-size', '28px')
+      .attr('fill', 'rgba(255,255,255,0.06)')
+      .attr('font-size', '32px')
       .attr('font-weight', '700')
       .attr('pointer-events', 'none')
       .text(label);
   }
 
-  // Root group for zoom/pan
-  g = svg.append('g');
   linkG = g.append('g').attr('class', 'links');
   nodeG = g.append('g').attr('class', 'nodes');
 
-  // Zoom behavior
+  // Zoom behavior with label visibility
+  let currentZoomScale = 1;
   const zoom = d3.zoom()
     .scaleExtent([0.1, 6])
     .on('zoom', (event) => {
       g.attr('transform', event.transform);
+      currentZoomScale = event.transform.k;
+      // Zoom-aware label visibility: hide micro labels when zoomed out
+      nodeG.selectAll('.node-label').each(function(d) {
+        const tier = d.tier || NODE_TIER[d.type] || 'micro';
+        if (tier === 'macro') {
+          this.style.opacity = 1;
+        } else if (tier === 'meso') {
+          this.style.opacity = currentZoomScale > 0.4 ? 1 : 0;
+        } else {
+          this.style.opacity = currentZoomScale > 1.0 ? 1 : 0;
+        }
+      });
     });
   svg.call(zoom);
 
-  // Initialize simulation — optimized for large graphs with hierarchy
+  // Initialize simulation — zone-separated with strong hierarchy
   simulation = d3.forceSimulation()
     .force('link', d3.forceLink().id(d => d.id).distance(d => {
-      // CONTAINS edges: tight clustering (parent-child close together)
-      if (d.type === 'CONTAINS' || d.type === 'DEFINES') return 40;
-      // IMPORTS: medium distance
-      if (d.type === 'IMPORTS') return 80;
-      // CALLS/communication: spread apart
-      return 100;
+      if (d.type === 'CONTAINS' || d.type === 'DEFINES') return 35;
+      if (d.type === 'IMPORTS') return 90;
+      return 120;
+    }).strength(d => {
+      // CONTAINS/DEFINES links are strong (keep hierarchy tight)
+      if (d.type === 'CONTAINS' || d.type === 'DEFINES') return 0.7;
+      return 0.3;
     }))
     .force('charge', d3.forceManyBody().strength(d => {
-      // Macro nodes repel more (keep them spaced apart as anchors)
       const tier = d.tier || NODE_TIER[d.type] || 'micro';
-      if (tier === 'macro') return -250;
-      if (tier === 'meso') return -120;
-      return -60;
-    }).theta(0.9).distanceMax(400))
-    .force('center', d3.forceCenter(width / 2, height / 2).strength(0.02))
+      if (tier === 'macro') return -400;
+      if (tier === 'meso') return -180;
+      return -90;
+    }).theta(0.8).distanceMax(600))
+    // No forceCenter — zone forces (forceX/forceY) handle positioning; center fights zones
     .force('x', d3.forceX().x(d => {
-      // Group by type zone: Structure→Files→Logic→API→Data→Infra
       const frac = TYPE_ZONE[d.type] || 0.5;
       return width * frac;
-    }).strength(0.08))
+    }).strength(0.15))
     .force('y', d3.forceY().y(d => {
-      // Push macro nodes toward top, micro toward bottom
       const tier = d.tier || NODE_TIER[d.type] || 'micro';
-      if (tier === 'macro') return height * 0.2;
-      if (tier === 'meso') return height * 0.5;
-      return height * 0.8;
-    }).strength(0.08))
+      if (tier === 'macro') return height * 0.12;
+      if (tier === 'meso') return height * 0.42;
+      return height * 0.75;
+    }).strength(0.12))
     .force('collision', d3.forceCollide().radius(d => {
-      const tierR = { macro: 30, meso: 18, micro: 10 };
+      const tierR = { macro: 65, meso: 30, micro: 16 };
       const tier = d.tier || NODE_TIER[d.type] || 'micro';
-      return tierR[tier] || 10;
-    }).iterations(1))
-    .alphaDecay(0.05)
-    .velocityDecay(0.4)
+      return tierR[tier] || 16;
+    }).iterations(3).strength(0.9))
+    .alphaDecay(0.04)
+    .velocityDecay(0.45)
     .on('tick', ticked);
 }
 
@@ -1572,10 +1726,20 @@ function getFilteredData() {
 // -----------------------------------------------------------------------
 // Compute edge counts for node sizing
 // -----------------------------------------------------------------------
+// Mode-relevant edge type filters for connection counting
+const LAYER_RELEVANT_EDGES = {
+  structure:  new Set(['CONTAINS', 'DEFINES']),
+  dependency: new Set(['IMPORTS', 'CALLS', 'CONTAINS', 'DEFINES']),
+  runtime:    new Set(['EMITS_EVENT', 'CONSUMES_EVENT', 'READS_CACHE', 'WRITES_CACHE', 'CALLS']),
+  all:        null,  // count everything
+};
+
 function computeEdgeCounts(nodes, edges) {
   const counts = {};
   for (const n of nodes) counts[n.id] = 0;
+  const allowed = LAYER_RELEVANT_EDGES[activeLayer] || null;
   for (const e of edges) {
+    if (allowed && !allowed.has(e.type)) continue;
     const src = e.source_id || e.source;
     const tgt = e.target_id || e.target;
     if (counts[src] !== undefined) counts[src]++;
@@ -1587,25 +1751,238 @@ function computeEdgeCounts(nodes, edges) {
 // -----------------------------------------------------------------------
 // Node shape: returns SVG path data
 // -----------------------------------------------------------------------
+const API_TYPES = new Set(['Endpoint', 'ExternalAPI']);
+const EVENT_TYPES = new Set(['Event', 'Router']);  // Diamond — decision/routing nodes
+const FILE_TYPES = new Set(['File']);
+const STRUCT_TYPES = new Set(['Workspace', 'Project', 'Service', 'Module']);
+
 function nodeShape(d, r) {
   const type = d.type;
-  if (INFRA_TYPES.has(type)) {
-    // Diamond
-    return `M0,${-r} L${r},0 L0,${r} L${-r},0 Z`;
-  } else if (DATA_TYPES.has(type)) {
-    // Square (rounded-ish)
-    const s = r * 0.8;
-    return `M${-s},${-s} L${s},${-s} L${s},${s} L${-s},${s} Z`;
-  } else {
-    // Circle approximation via path (12-sided polygon for consistency)
+  if (STRUCT_TYPES.has(type)) {
+    // Rounded Rectangle — containers (Workspace, Project, Service, Module)
+    // Rectangles = containers in every IDE/UML tool
+    const w = r * 1.3, h = r * 0.9;
+    const rx = Math.min(r * 0.25, 6);
+    return `M${-w+rx},${-h} L${w-rx},${-h} Q${w},${-h} ${w},${-h+rx} L${w},${h-rx} Q${w},${h} ${w-rx},${h} L${-w+rx},${h} Q${-w},${h} ${-w},${h-rx} L${-w},${-h+rx} Q${-w},${-h} ${-w+rx},${-h} Z`;
+  } else if (FILE_TYPES.has(type)) {
+    // Document shape — rect with folded corner (instantly recognizable as "file")
+    const w = r * 1.0, h = r * 1.15;
+    const fold = r * 0.3;
+    return `M${-w},${-h} L${w-fold},${-h} L${w},${-h+fold} L${w},${h} L${-w},${h} Z`;
+  } else if (API_TYPES.has(type)) {
+    // Hexagon — API/network-facing (infrastructure/cloud convention)
     const pts = [];
-    for (let i = 0; i < 12; i++) {
-      const a = (Math.PI * 2 * i) / 12;
+    for (let i = 0; i < 6; i++) {
+      const a = (Math.PI * 2 * i) / 6 - Math.PI / 6;
+      pts.push(`${r * Math.cos(a)},${r * Math.sin(a)}`);
+    }
+    return `M${pts.join('L')}Z`;
+  } else if (DATA_TYPES.has(type)) {
+    // Rounded square — data storage (database metaphor)
+    const s = r * 0.85;
+    const rx = s * 0.35;
+    return `M${-s+rx},${-s} L${s-rx},${-s} Q${s},${-s} ${s},${-s+rx} L${s},${s-rx} Q${s},${s} ${s-rx},${s} L${-s+rx},${s} Q${-s},${s} ${-s},${s-rx} L${-s},${-s+rx} Q${-s},${-s} ${-s+rx},${-s} Z`;
+  } else if (EVENT_TYPES.has(type)) {
+    // Diamond — events/routing (decision node in flowcharts)
+    return `M0,${-r} L${r*0.85},0 L0,${r} L${-r*0.85},0 Z`;
+  } else if (INFRA_TYPES.has(type)) {
+    // Hexagon — infrastructure (cloud diagrams convention)
+    const pts = [];
+    for (let i = 0; i < 6; i++) {
+      const a = (Math.PI * 2 * i) / 6;
+      pts.push(`${r * 0.9 * Math.cos(a)},${r * 0.9 * Math.sin(a)}`);
+    }
+    return `M${pts.join('L')}Z`;
+  } else {
+    // Default: smooth circle (24-gon) — functions, middleware, etc.
+    // Circles = atomic units, functions are atoms of code
+    const pts = [];
+    for (let i = 0; i < 24; i++) {
+      const a = (Math.PI * 2 * i) / 24;
       pts.push(`${r * Math.cos(a)},${r * Math.sin(a)}`);
     }
     return `M${pts.join('L')}Z`;
   }
 }
+
+// -----------------------------------------------------------------------
+// Per-mode layout algorithms
+// -----------------------------------------------------------------------
+
+// Build containment tree from CONTAINS/DEFINES edges
+function buildContainmentHierarchy(nodes, edges) {
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
+  const children = new Map();  // parentId -> [childIds]
+  const hasParent = new Set();
+
+  for (const e of edges) {
+    const sid = e.source_id || (typeof e.source === 'object' ? e.source.id : e.source);
+    const tid = e.target_id || (typeof e.target === 'object' ? e.target.id : e.target);
+    if (e.type === 'CONTAINS' || e.type === 'DEFINES') {
+      if (!children.has(sid)) children.set(sid, []);
+      children.get(sid).push(tid);
+      hasParent.add(tid);
+    }
+  }
+
+  // Find roots (nodes with no parent in containment tree)
+  const roots = nodes.filter(n => !hasParent.has(n.id)).map(n => n.id);
+  return { nodeMap, children, roots };
+}
+
+// Apply d3.tree() layout for Structure mode — supports 'radial' and 'tree' modes
+function applyTreeLayout(nodes, edges, mode) {
+  mode = mode || 'radial';
+  const { nodeMap, children, roots } = buildContainmentHierarchy(nodes, edges);
+  const container = document.getElementById('graph-container');
+  const viewWidth = container.clientWidth;
+  const viewHeight = container.clientHeight;
+
+  // Build hierarchy — only include nodes that ARE in the containment tree
+  const inTree = new Set();
+
+  function buildHierarchyNode(nodeId, childrenMap) {
+    inTree.add(nodeId);
+    const kids = childrenMap.get(nodeId) || [];
+    return {
+      id: nodeId,
+      children: kids.length > 0 ? kids.map(cid => buildHierarchyNode(cid, childrenMap)) : undefined
+    };
+  }
+
+  const hierarchyData = {
+    id: '__virtual_root__',
+    children: roots.map(rid => buildHierarchyNode(rid, children))
+  };
+
+  const root = d3.hierarchy(hierarchyData);
+  const leafCount = root.leaves().length;
+  const maxDepth = root.height;
+
+  if (mode === 'radial') {
+    // RADIAL: root at center, children fan out in concentric rings
+    const minRing = 80;   // inner ring radius (root's children)
+    const ringStep = Math.max(100, Math.min(160, viewHeight * 0.15));
+    const maxRadius = minRing + maxDepth * ringStep;
+
+    const treeLayout = d3.tree()
+      .size([2 * Math.PI, maxRadius])
+      .separation((a, b) => {
+        return (a.parent === b.parent ? 1 : 2) / Math.max(a.depth, 1);
+      });
+
+    treeLayout(root);
+
+    const cx = viewWidth / 2;
+    const cy = viewHeight / 2;
+
+    root.each(treeNode => {
+      if (treeNode.data.id === '__virtual_root__') return;
+      const angle = treeNode.x;
+      const radius = treeNode.y;
+      const graphNode = nodes.find(n => n.id === treeNode.data.id);
+      if (graphNode) {
+        graphNode.fx = cx + radius * Math.cos(angle - Math.PI / 2);
+        graphNode.fy = cy + radius * Math.sin(angle - Math.PI / 2);
+      }
+    });
+
+    // Orphans in outer ring
+    const orphanRadius = maxRadius + 100;
+    const orphanNodes = nodes.filter(n => !inTree.has(n.id));
+    orphanNodes.forEach((n, i) => {
+      const a = (2 * Math.PI * i) / Math.max(orphanNodes.length, 1);
+      n.fx = cx + orphanRadius * Math.cos(a);
+      n.fy = cy + orphanRadius * Math.sin(a);
+    });
+
+  } else {
+    // TREE: left-to-right horizontal tree
+    const treeBreadth = Math.max(viewHeight * 0.85, leafCount * 30);
+    const treeDepth = Math.max(viewWidth * 0.7, maxDepth * 200 + 100);
+
+    const treeLayout = d3.tree()
+      .size([treeBreadth, treeDepth])
+      .separation((a, b) => {
+        return a.parent === b.parent ? 1 : 1.8;
+      });
+
+    treeLayout(root);
+
+    root.each(treeNode => {
+      if (treeNode.data.id === '__virtual_root__') return;
+      const graphNode = nodes.find(n => n.id === treeNode.data.id);
+      if (graphNode) {
+        graphNode.fx = treeNode.y + 50;   // depth → horizontal
+        graphNode.fy = treeNode.x + 50;   // breadth → vertical
+      }
+    });
+
+    const orphanX = treeDepth + 100;
+    let orphanY = 50;
+    for (const n of nodes) {
+      if (!inTree.has(n.id)) {
+        n.fx = orphanX;
+        n.fy = orphanY;
+        orphanY += 55;
+      }
+    }
+  }
+}
+
+// Compute dependency depth for Dependency mode (importers above importees)
+function computeDepthMap(nodes, edges) {
+  const depTypes = new Set(['IMPORTS', 'CALLS', 'CALLS_API', 'CALLS_SERVICE', 'READS_DB', 'WRITES_DB']);
+  const inDegree = new Map();
+  const adjList = new Map();  // source -> targets
+
+  for (const n of nodes) {
+    inDegree.set(n.id, 0);
+    adjList.set(n.id, []);
+  }
+
+  for (const e of edges) {
+    const sid = e.source_id || (typeof e.source === 'object' ? e.source.id : e.source);
+    const tid = e.target_id || (typeof e.target === 'object' ? e.target.id : e.target);
+    if (depTypes.has(e.type) && inDegree.has(sid) && inDegree.has(tid)) {
+      adjList.get(sid).push(tid);
+      inDegree.set(tid, (inDegree.get(tid) || 0) + 1);
+    }
+  }
+
+  // Topological sort (Kahn's algorithm) for depth assignment
+  const depth = new Map();
+  const queue = [];
+  for (const [id, deg] of inDegree) {
+    if (deg === 0) { queue.push(id); depth.set(id, 0); }
+  }
+
+  while (queue.length > 0) {
+    const nid = queue.shift();
+    const d = depth.get(nid);
+    for (const tid of (adjList.get(nid) || [])) {
+      if (!depth.has(tid) || depth.get(tid) < d + 1) {
+        depth.set(tid, d + 1);
+      }
+      inDegree.set(tid, inDegree.get(tid) - 1);
+      if (inDegree.get(tid) === 0) queue.push(tid);
+    }
+  }
+
+  // Assign depth 0 to any unvisited nodes (cycles or disconnected)
+  for (const n of nodes) {
+    if (!depth.has(n.id)) depth.set(n.id, 0);
+  }
+
+  return depth;
+}
+
+// Release all fixed positions (return to force-directed)
+function releaseFixedPositions(nodes) {
+  for (const n of nodes) { n.fx = null; n.fy = null; }
+}
+
+// Draw convex hull boundaries around module/folder groups
 
 // -----------------------------------------------------------------------
 // Update graph rendering
@@ -1635,7 +2012,7 @@ function updateGraph() {
     .append('g')
     .attr('class', 'edge-group');
 
-  edgeEnter.append('line')
+  edgeEnter.append('path')
     .attr('class', 'edge-line');
 
   edgeEnter.append('text')
@@ -1647,7 +2024,20 @@ function updateGraph() {
     .attr('class', d => `edge-line edge-${d.group}`)
     .attr('stroke', d => EDGE_GROUP_COLORS[d.group] || '#888')
     .attr('stroke-dasharray', d => d.is_stale ? '4,3' : null)
-    .attr('marker-end', d => `url(#arrow-${d.group})`);
+    .attr('marker-end', d => `url(#arrow-${d.group})`)
+    .style('opacity', d => {
+      // Dynamic edge opacity per mode
+      if (activeLayer === 'structure') {
+        // Structure: structural edges are prominent, others are hidden by filter
+        return d.group === 'structural' ? 0.7 : 0.3;
+      } else if (activeLayer === 'dependency') {
+        return (d.group === 'data_flow' || d.group === 'communication' || d.group === 'routing') ? 0.8 : 0.3;
+      } else if (activeLayer === 'runtime') {
+        return (d.group === 'event_async' || d.group === 'caching') ? 0.8 : 0.3;
+      }
+      // All mode: structural faint, others visible
+      return d.group === 'structural' ? 0.25 : 0.65;
+    });
 
   edgeMerged.select('.edge-label')
     .text(d => d.type);
@@ -1698,29 +2088,38 @@ function updateGraph() {
       return nodeShape(d, r);
     })
     .attr('fill', d => {
-      return TYPE_COLORS[d.type] || TIER_COLORS[d.tier || NODE_TIER[d.type] || 'micro'] || '#FF8C42';
+      // Use radial gradient for depth effect, fall back to flat color
+      if (TYPE_COLORS[d.type]) return `url(#grad-${d.type})`;
+      return TIER_COLORS[d.tier || NODE_TIER[d.type] || 'micro'] || '#FF8C42';
     })
     .attr('stroke', d => {
-      if (d.is_stale) return '#e74c3c';
+      // Use the type color as stroke (brighter ring)
+      const color = TYPE_COLORS[d.type] || '#FF8C42';
       const tier = d.tier || NODE_TIER[d.type] || 'micro';
-      if (tier === 'macro') return 'rgba(255,255,255,0.5)';
-      return 'rgba(255,255,255,0.15)';
+      if (tier === 'macro') return color;
+      if (tier === 'meso') return color;
+      return 'rgba(255,255,255,0.08)';
     })
     .attr('stroke-width', d => {
-      if (d.is_stale) return 2;
       const tier = d.tier || NODE_TIER[d.type] || 'micro';
-      if (tier === 'macro') return 2.5;
+      if (tier === 'macro') return 2;
       if (tier === 'meso') return 1.2;
       return 0.5;
     })
-    .attr('stroke-dasharray', d => d.is_stale ? '4,2' : null)
     .attr('opacity', d => {
       if (filters.search && !d.name.toLowerCase().includes(filters.search) &&
-          !d.id.toLowerCase().includes(filters.search)) return 0.3;
+          !d.id.toLowerCase().includes(filters.search)) return 0.15;
       const tier = d.tier || NODE_TIER[d.type] || 'micro';
       if (tier === 'macro') return 1.0;
-      if (tier === 'meso') return 0.9;
-      return 0.75;
+      if (tier === 'meso') return 0.92;
+      return 0.8;
+    })
+    .style('filter', d => {
+      if (d.is_stale) return 'url(#glow-meso) saturate(0.5)';
+      const tier = d.tier || NODE_TIER[d.type] || 'micro';
+      if (tier === 'macro') return 'url(#glow-macro)';
+      if (tier === 'meso') return 'url(#glow-meso)';
+      return null;
     });
 
   nodeMerged.select('.node-label')
@@ -1782,17 +2181,30 @@ function updateGraph() {
     }
   });
 
-  // Restart simulation — lower alpha = settles faster = less CPU
+  // Restart simulation
   simulation.nodes(nodes);
   simulation.force('link').links(links);
-  simulation.alpha(0.4).restart();
+  // Pre-settle: run 200 ticks off-screen to eliminate the initial jitter
+  simulation.alpha(1).stop();
+  for (let i = 0; i < 200; i++) simulation.tick();
+  // Render the settled state, then gentle restart for fine-tuning
+  ticked();
+  simulation.alpha(0.15).restart();
 }
 
+// Node size by containment depth: depth 0 (root) = 80px, depth 5+ = 7px
+const DEPTH_SIZES = [80, 55, 32, 18, 10, 7];
+
 function nodeRadius(d, edgeCount) {
-  const tierBase = { macro: 20, meso: 12, micro: 6 };
-  const tier = d.tier || NODE_TIER[d.type] || 'micro';
-  const base = tierBase[tier] || 6;
-  return Math.max(base, Math.min(base + 10, base + edgeCount * 0.5));
+  // Containment depth determines base size (hierarchy always visible)
+  const depth = nodeDepthMap.get(d.id) ?? 5;
+  const baseSize = DEPTH_SIZES[Math.min(depth, DEPTH_SIZES.length - 1)];
+
+  if (activeLayer === 'structure') return baseSize;
+
+  // Other modes: boost connected nodes, cap growth to baseSize + 10
+  const connectionBoost = edgeCount > 0 ? Math.log2(edgeCount + 1) * 2 : 0;
+  return Math.min(baseSize * 0.7 + connectionBoost + 4, baseSize + 10);
 }
 
 function truncate(str, len) {
@@ -1810,44 +2222,154 @@ function ticked() {
   _tickFrame = requestAnimationFrame(() => {
     _tickFrame = null;
 
-    // Update edge lines
+    // Update edge curves (quadratic bezier for organic look)
     linkG.selectAll('.edge-line')
-      .attr('x1', d => d.source.x)
-      .attr('y1', d => d.source.y)
-      .attr('x2', d => d.target.x)
-      .attr('y2', d => d.target.y);
+      .attr('d', d => {
+        const sx = d.source.x, sy = d.source.y;
+        const tx = d.target.x, ty = d.target.y;
+        const dx = tx - sx, dy = ty - sy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        // Curve offset proportional to distance (short = near-straight, long = gentle arc)
+        const offset = Math.min(dist * 0.15, 40);
+        // Perpendicular control point
+        const mx = (sx + tx) / 2 - (dy / dist) * offset;
+        const my = (sy + ty) / 2 + (dx / dist) * offset;
+        return `M${sx},${sy} Q${mx},${my} ${tx},${ty}`;
+      });
 
-    // Update edge labels only when simulation is nearly done (saves CPU)
+    // Update edge labels at curve midpoint when simulation is settling
     if (simulation.alpha() < 0.1) {
       linkG.selectAll('.edge-label')
-        .attr('x', d => (d.source.x + d.target.x) / 2)
-        .attr('y', d => (d.source.y + d.target.y) / 2 - 4);
+        .attr('x', d => {
+          const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const offset = Math.min(dist * 0.15, 40);
+          return (d.source.x + d.target.x) / 2 - (dy / dist) * offset * 0.5;
+        })
+        .attr('y', d => {
+          const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const offset = Math.min(dist * 0.15, 40);
+          return (d.source.y + d.target.y) / 2 + (dx / dist) * offset * 0.5 - 4;
+        });
     }
 
     // Update nodes
     nodeG.selectAll('.node-group')
       .attr('transform', d => `translate(${d.x},${d.y})`);
+
+    // Label collision detection when simulation nearly done
+    if (simulation.alpha() < 0.08) {
+      hideOverlappingLabels();
+    }
   });
+}
+
+// Label collision avoidance — hide lower-priority labels that overlap
+function hideOverlappingLabels() {
+  const labels = nodeG.selectAll('.node-label').nodes();
+  if (!labels.length) return;
+
+  // Sort by priority: macro first, then meso, then micro
+  const prioritized = labels.slice().sort((a, b) => {
+    const da = d3.select(a).datum();
+    const db = d3.select(b).datum();
+    const pa = labelPriority(da);
+    const pb = labelPriority(db);
+    return pa - pb;
+  });
+
+  const shown = [];
+  for (const el of prioritized) {
+    // Skip labels already hidden by zoom
+    if (el.style.opacity === '0') continue;
+
+    const bbox = el.getBoundingClientRect();
+    if (bbox.width === 0) continue;  // not rendered
+
+    const overlaps = shown.some(prev => {
+      const pb = prev.getBoundingClientRect();
+      return !(bbox.right < pb.left - 2 || bbox.left > pb.right + 2 ||
+               bbox.bottom < pb.top - 1 || bbox.top > pb.bottom + 1);
+    });
+
+    if (overlaps) {
+      el.style.opacity = '0';
+    } else {
+      shown.push(el);
+    }
+  }
+}
+
+function labelPriority(node) {
+  const type = node.type;
+  if (type === 'Workspace' || type === 'Project') return 1;
+  if (type === 'Service' || type === 'Module') return 2;
+  if (type === 'File' || type === 'Router' || type === 'Endpoint') return 3;
+  return 4;
 }
 
 // -----------------------------------------------------------------------
 // Drag handlers
 // -----------------------------------------------------------------------
+// Collect all descendants of a node via CONTAINS/DEFINES edges
+function getDescendants(nodeId) {
+  const { children } = buildContainmentHierarchy(simulation.nodes(), rawData.edges);
+  const result = [];
+  function collect(nid) {
+    for (const cid of (children.get(nid) || [])) { result.push(cid); collect(cid); }
+  }
+  collect(nodeId);
+  return result;
+}
+
+let dragDescendants = [];  // cached during drag
+let dragOffsets = new Map(); // relative offsets from dragged node
+
 function dragStarted(event, d) {
   if (!event.active) simulation.alphaTarget(0.3).restart();
   d.fx = d.x;
   d.fy = d.y;
+
+  // In structure mode, drag children along with parent
+  if (activeLayer === 'structure') {
+    const tier = d.tier || NODE_TIER[d.type] || 'micro';
+    if (tier === 'macro' || tier === 'meso') {
+      const descIds = getDescendants(d.id);
+      const nodeMap = new Map(simulation.nodes().map(n => [n.id, n]));
+      dragDescendants = descIds.map(id => nodeMap.get(id)).filter(Boolean);
+      dragOffsets = new Map();
+      for (const child of dragDescendants) {
+        dragOffsets.set(child.id, { dx: child.x - d.x, dy: child.y - d.y });
+        child.fx = child.x;
+        child.fy = child.y;
+      }
+    }
+  }
 }
 
 function dragged(event, d) {
   d.fx = event.x;
   d.fy = event.y;
+
+  // Move descendants maintaining relative positions
+  for (const child of dragDescendants) {
+    const off = dragOffsets.get(child.id);
+    if (off) { child.fx = event.x + off.dx; child.fy = event.y + off.dy; }
+  }
 }
 
 function dragEnded(event, d) {
   if (!event.active) simulation.alphaTarget(0);
-  d.fx = null;
-  d.fy = null;
+  // In structure mode, keep pinned at new position (tree layout uses fx/fy)
+  if (activeLayer !== 'structure') { d.fx = null; d.fy = null; }
+
+  // Release or re-pin descendants
+  for (const child of dragDescendants) {
+    if (activeLayer !== 'structure') { child.fx = null; child.fy = null; }
+  }
+  dragDescendants = [];
+  dragOffsets.clear();
 }
 
 // -----------------------------------------------------------------------
@@ -1882,8 +2404,32 @@ function hideTooltip() {
 function selectNode(d) {
   selectedNodeId = d.id;
 
-  // Update highlight
-  nodeG.selectAll('.node-group').classed('node-selected', n => n.id === d.id);
+  // Find connected node IDs
+  const connectedIds = new Set([d.id]);
+  const connectedEdgeKeys = new Set();
+  for (const e of rawData.edges) {
+    const sid = e.source_id || (typeof e.source === 'object' ? e.source.id : e.source);
+    const tid = e.target_id || (typeof e.target === 'object' ? e.target.id : e.target);
+    if (sid === d.id || tid === d.id) {
+      connectedIds.add(sid);
+      connectedIds.add(tid);
+      connectedEdgeKeys.add(`${sid}-${tid}-${e.type}`);
+    }
+  }
+
+  // Apply focus-dimming classes
+  svg.classed('graph-has-selection', true);
+  nodeG.selectAll('.node-group')
+    .classed('node-selected', n => n.id === d.id)
+    .classed('node-connected', n => connectedIds.has(n.id));
+  linkG.selectAll('.edge-group')
+    .classed('edge-connected', function() {
+      const lineData = d3.select(this).select('.edge-line').datum();
+      if (!lineData) return false;
+      const sid = typeof lineData.source === 'object' ? lineData.source.id : lineData.source;
+      const tid = typeof lineData.target === 'object' ? lineData.target.id : lineData.target;
+      return connectedEdgeKeys.has(`${sid}-${tid}-${lineData.type}`);
+    });
 
   const panel = document.getElementById('drawer-content');
   const tier = d.tier || NODE_TIER[d.type] || 'micro';
@@ -1933,7 +2479,15 @@ function selectNodeById(id) {
 // Click on background to deselect
 document.getElementById('graph-container').addEventListener('click', () => {
   selectedNodeId = null;
-  if (nodeG) nodeG.selectAll('.node-group').classed('node-selected', false);
+  if (svg) svg.classed('graph-has-selection', false);
+  if (nodeG) {
+    nodeG.selectAll('.node-group')
+      .classed('node-selected', false)
+      .classed('node-connected', false);
+  }
+  if (linkG) {
+    linkG.selectAll('.edge-group').classed('edge-connected', false);
+  }
   closeDrawer();
 });
 
@@ -1958,7 +2512,17 @@ window.addEventListener('resize', () => {
     const width = container.clientWidth;
     const height = container.clientHeight;
     svg.attr('width', width).attr('height', height);
-    simulation.force('center', d3.forceCenter(width / 2, height / 2));
+    // Update zone target positions on resize (forceX/forceY use width/height)
+    simulation.force('x').x(d => {
+      const frac = TYPE_ZONE[d.type] || 0.5;
+      return width * frac;
+    });
+    simulation.force('y').y(d => {
+      const tier = d.tier || NODE_TIER[d.type] || 'micro';
+      if (tier === 'macro') return height * 0.12;
+      if (tier === 'meso') return height * 0.42;
+      return height * 0.75;
+    });
     simulation.alpha(0.15).restart();
   }, 200);
 });
@@ -2508,7 +3072,6 @@ function formatPayload(payload) {
 }
 
 // Runtime activity log in sidebar
-const _runtimeLog = [];
 const MAX_LOG_ENTRIES = 20;
 
 function addRuntimeLogEntry(data, matchedNodeIds) {
@@ -2623,7 +3186,6 @@ function initRuntimeLayer() {
 // -----------------------------------------------------------------------
 // Agent Activity Layer (Oracle v2 pattern)
 // -----------------------------------------------------------------------
-let _agentEventCount = 0;
 const MAX_AGENT_LOG = 30;
 
 function initAgentActivityLayer() {
@@ -2653,7 +3215,7 @@ function initAgentActivityLayer() {
     // Show banner
     showAgentBanner(data);
 
-    _agentEventCount++;
+
   });
 }
 
@@ -3078,8 +3640,94 @@ function setViewLayer(layer) {
     btn.classList.toggle('active', btn.dataset.layer === layer);
   });
 
+  // Show/hide structure sub-layout selector
+  const subEl = document.getElementById('struct-sublayout');
+  if (subEl) subEl.classList.toggle('visible', layer === 'structure');
+
+  // Per-mode layout switching — completely different algorithms per view
+  if (simulation) {
+    const { nodes, edges } = getFilteredData();
+    const container = document.getElementById('graph-container');
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    // First, release any fixed positions from previous mode
+    releaseFixedPositions(simulation.nodes());
+
+    if (layer === 'structure') {
+      // Structure layout: radial circle or left-to-right tree
+      applyTreeLayout(simulation.nodes(), rawData.edges, structLayout);
+      simulation.force('x').strength(0);
+      simulation.force('y').strength(0);
+      simulation.force('charge').strength(-30);
+      simulation.force('link').strength(0);
+    } else if (layer === 'dependency') {
+      // FLOW LAYOUT: top-down based on import/call depth
+      const depthMap = computeDepthMap(simulation.nodes(), rawData.edges);
+      const maxDepth = Math.max(...depthMap.values(), 1);
+      simulation.force('x').x(d => {
+        const frac = TYPE_ZONE[d.type] || 0.5;
+        return width * frac;
+      }).strength(0.18);
+      simulation.force('y').y(d => {
+        const depth = depthMap.get(d.id) || 0;
+        return 80 + (depth / maxDepth) * (height - 160);
+      }).strength(0.25);
+      simulation.force('charge').strength(-180);
+      simulation.force('link').strength(d => {
+        if (d.type === 'IMPORTS' || d.type === 'CALLS') return 0.5;
+        return 0.2;
+      });
+    } else if (layer === 'runtime') {
+      // CLUSTER LAYOUT: weaker zones, let event connections dominate
+      simulation.force('x').x(d => {
+        const frac = TYPE_ZONE[d.type] || 0.5;
+        return width * frac;
+      }).strength(0.08);
+      simulation.force('y').y(d => {
+        const tier = d.tier || NODE_TIER[d.type] || 'micro';
+        if (tier === 'macro') return height * 0.12;
+        if (tier === 'meso') return height * 0.42;
+        return height * 0.75;
+      }).strength(0.06);
+      simulation.force('charge').strength(-120);
+      simulation.force('link').strength(d => {
+        if (d.type === 'EMITS_EVENT' || d.type === 'CONSUMES_EVENT') return 0.6;
+        return 0.2;
+      });
+    } else {
+      // ALL: strong zone-based force layout
+      simulation.force('x').x(d => {
+        const frac = TYPE_ZONE[d.type] || 0.5;
+        return width * frac;
+      }).strength(0.18);
+      simulation.force('y').y(d => {
+        const tier = d.tier || NODE_TIER[d.type] || 'micro';
+        if (tier === 'macro') return height * 0.12;
+        if (tier === 'meso') return height * 0.42;
+        return height * 0.75;
+      }).strength(0.14);
+      simulation.force('charge').strength(d => {
+        const tier = d.tier || NODE_TIER[d.type] || 'micro';
+        return tier === 'macro' ? -400 : tier === 'meso' ? -180 : -90;
+      });
+      simulation.force('link').strength(d => {
+        if (d.type === 'CONTAINS' || d.type === 'DEFINES') return 0.7;
+        return 0.3;
+      });
+    }
+  }
+
   updateGraph();
   updateStats();
+}
+
+function setStructLayout(mode) {
+  structLayout = mode;
+  document.querySelectorAll('.sublayout-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.sublayout === mode);
+  });
+  if (activeLayer === 'structure') setViewLayer('structure');
 }
 
 // -----------------------------------------------------------------------
@@ -3326,9 +3974,6 @@ async function startScan() {
 }
 
 // Quick select folder
-function setQuickFolder(path) {
-  document.getElementById('scan-folder-input').value = path;
-}
 
 // -----------------------------------------------------------------------
 // Mode Help & Controls
@@ -3376,7 +4021,6 @@ let scene3d = null, camera3d = null, renderer3d = null;
 let meshes3d = [], linkLines3d = [], linkDataArr3d = [];
 let animFrame3d = null;
 let travelingParticles3d = null;
-let layout3d = 'tree'; // 'tree', 'zones', 'flat'
 let intelligenceData = null;
 
 // 3D type colors (hex numbers for Three.js)
@@ -3498,9 +4142,9 @@ function clusterNodes3d(nodes, edges) {
 
 // --- HUD state ---
 const hud3d = {
-  camDistance: 15, nodeSize: 1.0, breathingIntensity: 0.05,
-  rotationSpeed: 0.02, linkOpacity: 0.15, particleSpeed: 0.3,
-  showAllLinks: false, sphereMode: false,
+  camDistance: 45, nodeSize: 1.0, breathingIntensity: 0.05,
+  rotationSpeed: 0, linkOpacity: 0.35, particleSpeed: 0.3,
+  showAllLinks: true, showLabels: true, sphereMode: false,
   scaleByPageRank: false, colorByCommunity: false, highlightOrphans: true,
 };
 const camX3d = { x: 0, v: 0 };
@@ -3508,7 +4152,25 @@ const camY3d = { x: 0, v: 0 };
 const targetAngle3d = { x: 0, y: 0 };
 let activeNode3d = null; // hovered/selected node id
 let selectedNode3d = null;
+let flyTarget3d = null; // camera fly target { x, y, z, dist, t }
 let hudHovered3d = false;
+let collapsedNodes3d = new Set(); // collapsed parent node ids
+let hiddenNodes3d = new Set();    // all descendants of collapsed nodes
+let childrenMap3d = new Map();    // nodeId → [child nodeIds]
+
+function recomputeHidden3d() {
+  hiddenNodes3d.clear();
+  function hideDescendants(pid) {
+    const children = childrenMap3d.get(pid) || [];
+    for (const cid of children) {
+      hiddenNodes3d.add(cid);
+      hideDescendants(cid);
+    }
+  }
+  for (const cid of collapsedNodes3d) {
+    hideDescendants(cid);
+  }
+}
 
 function hudUpdate() {
   hud3d.camDistance = parseFloat(document.getElementById('hud-cam-dist').value);
@@ -3518,6 +4180,7 @@ function hudUpdate() {
   hud3d.linkOpacity = parseFloat(document.getElementById('hud-link-opacity').value);
   hud3d.particleSpeed = parseFloat(document.getElementById('hud-particle').value);
   hud3d.showAllLinks = document.getElementById('hud-show-links').checked;
+  hud3d.showLabels = document.getElementById('hud-show-labels').checked;
   hud3d.sphereMode = document.getElementById('hud-sphere').checked;
   hud3d.scaleByPageRank = document.getElementById('hud-pagerank').checked;
   hud3d.colorByCommunity = document.getElementById('hud-communities').checked;
@@ -3561,23 +4224,45 @@ function reset3DCamera() {
   camX3d.x = 0; camX3d.v = 0;
   camY3d.x = 0; camY3d.v = 0;
   targetAngle3d.x = 0; targetAngle3d.y = 0;
-  hud3d.camDistance = 15;
-  document.getElementById('hud-cam-dist').value = 15;
-  document.getElementById('hud-cam-val').textContent = '15';
+  hud3d.camDistance = 45;
+  document.getElementById('hud-cam-dist').value = 45;
+  document.getElementById('hud-cam-val').textContent = '45';
 }
 
 // --- Containment tree builder (for Tree layout + sphere grouping) ---
-function buildContainmentTree(nodes) {
+// Uses parent_id AND CONTAINS/DEFINES edges for richer hierarchy
+function buildContainmentTree(nodes, edges) {
   const nodeMap = new Map();
-  const roots = [];
+  const assigned = new Set(); // nodes with a parent
   nodes.forEach(n => nodeMap.set(n.id, { ...n, _children: [], _depth: 0 }));
+
+  // 1) Build from parent_id first
   nodes.forEach(n => {
     if (n.parent_id && nodeMap.has(n.parent_id)) {
       nodeMap.get(n.parent_id)._children.push(n.id);
-    } else {
-      roots.push(n.id);
+      assigned.add(n.id);
     }
   });
+
+  // 2) Enrich from CONTAINS/DEFINES edges (if edges provided)
+  if (edges) {
+    edges.forEach(e => {
+      if (e.type !== 'CONTAINS' && e.type !== 'DEFINES') return;
+      const parent = e.source_id || e.source;
+      const child = e.target_id || e.target;
+      if (!assigned.has(child) && nodeMap.has(parent) && nodeMap.has(child)) {
+        nodeMap.get(parent)._children.push(child);
+        assigned.add(child);
+      }
+    });
+  }
+
+  // 3) Remaining unassigned nodes are roots
+  const roots = [];
+  nodes.forEach(n => {
+    if (!assigned.has(n.id)) roots.push(n.id);
+  });
+
   // BFS to compute depth
   const queue = roots.map(id => ({ id, depth: 0 }));
   let maxDepth = 0;
@@ -3591,44 +4276,71 @@ function buildContainmentTree(nodes) {
   return { nodeMap, roots, maxDepth };
 }
 
-// --- Tree layout: Y=depth, X/Z=radial spread around parent ---
-function compute3DTreePositions(nodes) {
-  const { nodeMap, roots, maxDepth } = buildContainmentTree(nodes);
+// --- Tree layout: radial wedge allocation (deterministic, no force sim) ---
+// Each subtree gets a proportional angular slice. No overlap possible.
+// Y = depth (top-down), X/Z = radial position in the slice.
+function compute3DTreePositions(nodes, edges) {
+  const { nodeMap, roots, maxDepth } = buildContainmentTree(nodes, edges);
   const positions = new Map();
-  const yStep = maxDepth > 0 ? 12 / maxDepth : 3;
 
-  function layoutNode(nodeId, parentX, parentZ, sibIdx, sibCount, radius) {
+  const LEVEL_HEIGHT = 7.0;   // Y gap between depth levels
+  const RING_SPACING = 8.0;   // X/Z distance between depth rings
+  const Y_TOP = maxDepth * LEVEL_HEIGHT / 2;  // center tree vertically
+
+  // Count leaf nodes — used for proportional wedge sizing
+  function countLeaves(nodeId) {
     const nd = nodeMap.get(nodeId);
-    const y = 6 - nd._depth * yStep;
-    let x, z;
-    if (nd._depth === 0) {
-      x = (sibIdx - (sibCount - 1) / 2) * 4;
-      z = 0;
-    } else {
-      const angle = (sibIdx / Math.max(sibCount, 1)) * Math.PI * 2 + nd._depth * 0.3;
-      const spread = radius * (0.8 + Math.sqrt(sibCount) * 0.25);
-      x = parentX + Math.cos(angle) * spread;
-      z = parentZ + Math.sin(angle) * spread;
+    if (nd._children.length === 0) {
+      nd._leafCount = 1;
+      return 1;
     }
+    nd._leafCount = nd._children.reduce((s, cid) => s + countLeaves(cid), 0);
+    return nd._leafCount;
+  }
+  roots.forEach(rid => countLeaves(rid));
+
+  // Recursive layout: each node sits at center of its angular wedge
+  function layout(nodeId, wedgeStart, wedgeEnd, depth) {
+    const nd = nodeMap.get(nodeId);
+    const midAngle = (wedgeStart + wedgeEnd) / 2;
+    const radius = depth * RING_SPACING;
+    const x = radius > 0 ? Math.cos(midAngle) * radius : 0;
+    const z = radius > 0 ? Math.sin(midAngle) * radius : 0;
+    const y = Y_TOP - depth * LEVEL_HEIGHT;
     positions.set(nodeId, new THREE.Vector3(x, y, z));
+
     const children = nd._children;
-    const childRadius = radius * 0.65;
-    for (let i = 0; i < children.length; i++) {
-      layoutNode(children[i], x, z, i, children.length, childRadius);
-    }
+    if (children.length === 0) return;
+
+    // Divide this node's wedge among children proportional to leaf count
+    const totalLeaves = nd._leafCount;
+    let currentAngle = wedgeStart;
+
+    children.forEach(cid => {
+      const childLeaves = nodeMap.get(cid)._leafCount || 1;
+      const childWedge = (wedgeEnd - wedgeStart) * (childLeaves / totalLeaves);
+      layout(cid, currentAngle, currentAngle + childWedge, depth + 1);
+      currentAngle += childWedge;
+    });
   }
 
-  for (let i = 0; i < roots.length; i++) {
-    layoutNode(roots[i], 0, 0, i, roots.length, 3.5);
-  }
+  // Allocate full circle among roots proportional to their leaf counts
+  const totalRootLeaves = roots.reduce((s, rid) => s + (nodeMap.get(rid)._leafCount || 1), 0);
+  let angle = 0;
+  roots.forEach(rid => {
+    const wedge = Math.PI * 2 * ((nodeMap.get(rid)._leafCount || 1) / totalRootLeaves);
+    layout(rid, angle, angle + wedge, 0);
+    angle += wedge;
+  });
+
   return positions;
 }
 
 // --- Sphere layout grouped by directory ---
-function compute3DSpherePositions(nodes) {
-  const { nodeMap, roots } = buildContainmentTree(nodes);
+function compute3DSpherePositions(nodes, edges) {
+  const { nodeMap, roots } = buildContainmentTree(nodes, edges);
   const positions = new Map();
-  const SPHERE_R = 7;
+  const SPHERE_R = 10;
 
   // Assign each top-level module a longitude arc on the sphere
   // Recursively place children near parent
@@ -3652,8 +4364,10 @@ function compute3DSpherePositions(nodes) {
 
   function placeSphere(nodeId, basePhi, baseTheta, spread, idx) {
     const nd = nodeMap.get(nodeId);
-    const phi = basePhi + (idx * 0.15 - nd._children.length * 0.075) * spread;
-    const theta = baseTheta + (nd._depth * 0.35);
+    // Add type-based longitude offset so Functions cluster separately from Files
+    const typeOffset = (TYPE_ZONE[nd.type] || 0.5) * 0.4;
+    const phi = basePhi + typeOffset + (idx * 0.2 - nd._children.length * 0.1) * spread;
+    const theta = baseTheta + (nd._depth * 0.4);
     const r = SPHERE_R;
     const sinT = Math.sin(theta);
     positions.set(nodeId, new THREE.Vector3(
@@ -3692,6 +4406,65 @@ function compute3DSpherePositions(nodes) {
   });
 
   return positions;
+}
+
+// --- Text label sprites for 3D nodes ---
+let labelSprites3d = [];
+
+function createTextSprite(text, hexColor, tier) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const fontSize = tier === 'macro' ? 40 : tier === 'meso' ? 32 : 24;
+  const font = `bold ${fontSize}px 'Segoe UI', sans-serif`;
+  ctx.font = font;
+  const metrics = ctx.measureText(text);
+  const padding = 12;
+  canvas.width = Math.min(metrics.width + padding * 2, 512);
+  canvas.height = fontSize + padding * 2;
+
+  // Draw background pill
+  ctx.fillStyle = 'rgba(10, 10, 20, 0.7)';
+  const radius = (fontSize + padding) / 2;
+  ctx.beginPath();
+  if (ctx.roundRect) {
+    ctx.roundRect(0, 0, canvas.width, canvas.height, radius);
+  } else {
+    // Fallback for browsers without roundRect
+    const w = canvas.width, h = canvas.height, r = Math.min(radius, w/2, h/2);
+    ctx.moveTo(r, 0);
+    ctx.arcTo(w, 0, w, h, r);
+    ctx.arcTo(w, h, 0, h, r);
+    ctx.arcTo(0, h, 0, 0, r);
+    ctx.arcTo(0, 0, w, 0, r);
+    ctx.closePath();
+  }
+  ctx.fill();
+
+  // Draw text
+  ctx.font = font;
+  const r = (hexColor >> 16) & 0xff;
+  const g = (hexColor >> 8) & 0xff;
+  const b = hexColor & 0xff;
+  ctx.fillStyle = `rgb(${r},${g},${b})`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    sizeAttenuation: true,
+  });
+
+  const sprite = new THREE.Sprite(material);
+  const aspect = canvas.width / canvas.height;
+  const baseH = tier === 'macro' ? 0.7 : tier === 'meso' ? 0.5 : 0.35;
+  sprite.scale.set(aspect * baseH, baseH, 1);
+  return sprite;
 }
 
 // --- 2D/3D mode switch ---
@@ -3750,8 +4523,8 @@ async function init3DScene() {
   scene3d.background = new THREE.Color(0x0a0a0f);
 
   // Camera
-  camera3d = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
-  camera3d.position.z = 15;
+  camera3d = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+  camera3d.position.z = hud3d.camDistance;
 
   // Renderer
   renderer3d = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
@@ -3773,6 +4546,13 @@ async function init3DScene() {
   const rimLight = new THREE.PointLight(0x4A90D9, 0.5, 30);
   rimLight.position.set(0, 0, 0);
   scene3d.add(rimLight);
+
+  // Subtle grid for spatial reference
+  const gridHelper = new THREE.GridHelper(30, 20, 0x1a1a3e, 0x111128);
+  gridHelper.position.y = -6;
+  gridHelper.material.opacity = 0.3;
+  gridHelper.material.transparent = true;
+  scene3d.add(gridHelper);
 
   // Build data
   const nodes = rawData.nodes;
@@ -3810,37 +4590,26 @@ async function init3DScene() {
   });
 
   // --- Pre-compute all layout positions ---
-  const treePositions = compute3DTreePositions(nodes);
-  const spherePositions = compute3DSpherePositions(nodes);
+  const treePositions = compute3DTreePositions(nodes, edges);
+  const spherePositions = compute3DSpherePositions(nodes, edges);
 
-  // Zones: X=type zone, Y=tier, Z=containment depth
-  const zonesPositions = new Map();
-  const TIER_Y_ZONES = { macro: 5, meso: 0, micro: -5 };
-  const { nodeMap: ctreeMap } = buildContainmentTree(nodes);
+  // --- Build children map for collapse/expand ---
+  collapsedNodes3d.clear();
+  hiddenNodes3d.clear();
+  childrenMap3d = new Map();
   nodes.forEach(n => {
-    const tier = n.tier || NODE_TIER[n.type] || 'micro';
-    const typeZone = TYPE_ZONE[n.type] || 0.5;
-    const depth = ctreeMap.get(n.id)?._depth || 0;
-    zonesPositions.set(n.id, new THREE.Vector3(
-      (typeZone - 0.5) * 20,
-      TIER_Y_ZONES[tier] || -5,
-      (depth - 3) * 1.5
-    ));
-  });
-
-  // Flat: initial random spread (will be refined by force sim)
-  const flatPositions = new Map();
-  nodes.forEach((n, i) => {
-    flatPositions.set(n.id, new THREE.Vector3(
-      (xxhash3d(1, i) - 0.5) * 12,
-      (xxhash3d(2, i) - 0.5) * 12,
-      (xxhash3d(3, i) - 0.5) * 12
-    ));
+    const pid = n.parent_id;
+    if (pid) {
+      if (!childrenMap3d.has(pid)) childrenMap3d.set(pid, []);
+      childrenMap3d.get(pid).push(n.id);
+    }
   });
 
   // --- Node meshes ---
-  const sharedGeo = new THREE.SphereGeometry(0.08, 16, 16);
+  // Larger geometry so nodes are visible (not tiny dots)
+  const sharedGeo = new THREE.SphereGeometry(1, 16, 12);
   meshes3d = [];
+  labelSprites3d = [];
   const nodeMap3d = new Map();
 
   nodes.forEach((node, i) => {
@@ -3850,15 +4619,15 @@ async function init3DScene() {
     const communityId = clusters.get(node.id) || 0;
     const isOrphan = orphanSet.has(node.id);
 
-    // Default sizing: tier base + connection count (matching 2D)
+    // Sizing: world-space radius. macro=large, micro=small
     const tier = node.tier || NODE_TIER[node.type] || 'micro';
-    const tierBase = { macro: 1.5, meso: 1.0, micro: 0.6 };
+    const tierBase = { macro: 0.8, meso: 0.5, micro: 0.25 };
     const edgeCount = adj3d.get(node.id)?.size || 0;
-    const defaultSize = (tierBase[tier] || 0.6) + Math.min(edgeCount * 0.08, 1.2);
+    const defaultSize = (tierBase[tier] || 0.25) + Math.min(edgeCount * 0.03, 0.3);
 
     // PageRank sizing (optional overlay)
     const rank = pageRanks[node.id] || 0;
-    const pagerankSize = rank > 0 ? (0.5 + Math.min(rank * 500, 3)) : defaultSize;
+    const pagerankSize = rank > 0 ? (0.25 + Math.min(rank * 200, 1.2)) : defaultSize;
 
     const sizeScale = hud3d.scaleByPageRank ? pagerankSize : defaultSize;
 
@@ -3867,21 +4636,16 @@ async function init3DScene() {
       metalness: 0.3,
       roughness: 0.4,
       emissive: (hud3d.highlightOrphans && isOrphan) ? 0xE74C3C : typeColor,
-      emissiveIntensity: (hud3d.highlightOrphans && isOrphan) ? 0.4 : 0.1,
+      emissiveIntensity: (hud3d.highlightOrphans && isOrphan) ? 0.4 : 0.15,
     });
 
     const mesh = new THREE.Mesh(sharedGeo, material);
 
     // Get position for current layout
     const treePos = treePositions.get(node.id) || new THREE.Vector3();
-    const zonesPos = zonesPositions.get(node.id) || new THREE.Vector3();
-    const flatPos = flatPositions.get(node.id) || new THREE.Vector3();
     const spherePos = spherePositions.get(node.id) || new THREE.Vector3();
 
-    let startPos;
-    if (layout3d === 'zones') startPos = zonesPos.clone();
-    else if (layout3d === 'flat') startPos = flatPos.clone();
-    else startPos = treePos.clone(); // default: tree
+    const startPos = treePos.clone();
 
     mesh.position.copy(startPos);
     mesh.scale.setScalar(sizeScale);
@@ -3889,8 +4653,6 @@ async function init3DScene() {
     mesh.userData = {
       node, index: i,
       treePos: treePos.clone(),
-      zonesPos: zonesPos.clone(),
-      flatPos: flatPos.clone(),
       spherePos: spherePos.clone(),
       currentPos: startPos.clone(),
       defaultSize,
@@ -3902,6 +4664,17 @@ async function init3DScene() {
 
     scene3d.add(mesh);
     meshes3d.push(mesh);
+
+    // --- Text label sprite ---
+    const displayName = node.name || node.id.split('/').pop() || node.id;
+    const truncName = displayName.length > 20 ? displayName.slice(0, 19) + '\u2026' : displayName;
+    const label = createTextSprite(truncName, typeColor, tier);
+    label.position.copy(startPos);
+    label.position.y += sizeScale + 0.25;
+    label.userData = { meshIndex: i, tier };
+    label.visible = hud3d.showLabels;
+    scene3d.add(label);
+    labelSprites3d.push(label);
   });
 
   // Link lines (adj3d already built above)
@@ -3921,7 +4694,7 @@ async function init3DScene() {
 
     const lineMat = new THREE.LineBasicMaterial({
       color: colorNum,
-      opacity: 0,
+      opacity: hud3d.showAllLinks ? 0.35 : 0,
       transparent: true,
     });
 
@@ -3963,12 +4736,8 @@ async function init3DScene() {
   travelingParticles3d.visible = false;
   scene3d.add(travelingParticles3d);
 
-  // --- Force simulation for flat and zones layouts ---
-  if (layout3d === 'flat') {
-    run3DFlatForce(nodes, edges, nodeMap3d, adj3d);
-  } else if (layout3d === 'zones') {
-    run3DZonesForce(nodes, edges, nodeMap3d, adj3d);
-  }
+
+
 
   // --- Animation loop ---
   let time3d = 0;
@@ -3985,47 +4754,90 @@ async function init3DScene() {
     camY3d.x = newCamY.x; camY3d.v = newCamY.v;
 
     const camDist = hud3d.camDistance;
-    camera3d.position.x = Math.sin(camX3d.x) * camDist;
-    camera3d.position.z = Math.cos(camX3d.x) * camDist;
-    camera3d.position.y = camY3d.x * 5;
-    camera3d.lookAt(0, 0, 0);
+    // Fly-to-node: smoothly move camera center toward clicked node
+    let lookX = 0, lookY = 0, lookZ = 0;
+    if (flyTarget3d) {
+      flyTarget3d.t = Math.min(1, flyTarget3d.t + 0.03);
+      const ease = flyTarget3d.t * flyTarget3d.t * (3 - 2 * flyTarget3d.t); // smoothstep
+      lookX = flyTarget3d.x * ease;
+      lookY = flyTarget3d.y * ease;
+      lookZ = flyTarget3d.z * ease;
+      if (flyTarget3d.t >= 1 && !selectedNode3d) flyTarget3d = null;
+    }
+    camera3d.position.x = lookX + Math.sin(camX3d.x) * camDist;
+    camera3d.position.z = lookZ + Math.cos(camX3d.x) * camDist;
+    camera3d.position.y = lookY + camY3d.x * 5;
+    camera3d.lookAt(lookX, lookY, lookZ);
 
-    // Breathing + position update
+    // Position update + breathing (scale only, NOT position)
     const isSphere = hud3d.sphereMode;
     meshes3d.forEach((mesh, i) => {
       const ud = mesh.userData;
+      const nodeId = ud.node.id;
+      const isHidden = hiddenNodes3d.has(nodeId);
+      const isCollapsed = collapsedNodes3d.has(nodeId);
+
+      // Hide descendants of collapsed nodes
+      mesh.visible = !isHidden;
+      if (isHidden) {
+        if (i < labelSprites3d.length) labelSprites3d[i].visible = false;
+        return;
+      }
+
       let targetPos;
       if (isSphere) {
         targetPos = ud.spherePos;
-      } else if (layout3d === 'tree') {
-        targetPos = ud.treePos;
-      } else if (layout3d === 'zones') {
-        targetPos = ud.zonesPos;
       } else {
-        targetPos = ud.flatPos;
+        targetPos = ud.treePos;
       }
 
-      ud.currentPos.lerp(targetPos, 0.05);
+      ud.currentPos.lerp(targetPos, 0.08);
 
-      // Breathing
-      const n = fractalNoise3d(time3d * 0.5 + i * 0.1, 2, 42);
-      const scale = 1 + n * hud3d.breathingIntensity;
-      mesh.position.copy(ud.currentPos).multiplyScalar(scale);
+      // Position — no breathing distortion
+      mesh.position.copy(ud.currentPos);
+
+      // Breathing affects SCALE only (gentle pulse)
+      const breathNoise = fractalNoise3d(time3d * 0.5 + i * 0.1, 2, 42);
+      const breathScale = 1 + breathNoise * hud3d.breathingIntensity;
 
       // Node size — tier+connections default, or PageRank if toggled
       const activeSize = hud3d.scaleByPageRank ? ud.pagerankSize : ud.defaultSize;
-      mesh.scale.setScalar(activeSize * hud3d.nodeSize);
+      // Collapsed nodes get a size boost to signal "there's more inside"
+      const collapseBoost = isCollapsed ? 1.4 : 1.0;
+      mesh.scale.setScalar(activeSize * hud3d.nodeSize * breathScale * collapseBoost);
 
-      // Orphan pulsing
-      if (hud3d.highlightOrphans && ud.isOrphan) {
+      // Collapsed node visual: gold pulsing glow
+      if (isCollapsed) {
+        mesh.material.emissive.setHex(0xFFD700);
+        mesh.material.emissiveIntensity = 0.3 + 0.15 * Math.sin(time3d * 2);
+      } else if (hud3d.highlightOrphans && ud.isOrphan) {
+        mesh.material.emissive.setHex(0xE74C3C);
         mesh.material.emissiveIntensity = 0.3 + 0.3 * Math.sin(time3d * 3 + i);
+      } else if (!selectedNode3d || ud.node.id !== selectedNode3d) {
+        // Reset to normal type color emissive
+        mesh.material.emissive.setHex(TYPE_COLORS_3D[ud.node.type] || 0x888888);
+        mesh.material.emissiveIntensity = 0.15;
       }
 
-      // Gentle rotation
-      mesh.rotation.y = time3d * 0.2 + i * 0.01;
+      // Update label position + LOD (distance-aware visibility & scaling)
+      if (i < labelSprites3d.length) {
+        const label = labelSprites3d[i];
+        label.position.copy(mesh.position);
+        label.position.y += activeSize * hud3d.nodeSize * collapseBoost + 0.15;
+        const distToCamera = mesh.position.distanceTo(camera3d.position);
+        // LOD: macro always visible, meso within 40 units, micro within 12
+        const tierThreshold = { macro: 999, meso: 40, micro: 12 };
+        const threshold = tierThreshold[label.userData.tier] || 12;
+        label.visible = hud3d.showLabels && distToCamera < threshold;
+        // Scale labels so they stay readable at different distances
+        if (label.visible) {
+          const scaleFactor = Math.max(0.4, Math.min(1.5, distToCamera * 0.08));
+          label.scale.setScalar(scaleFactor * (label.userData.tier === 'macro' ? 1.3 : label.userData.tier === 'meso' ? 1.0 : 0.7));
+        }
+      }
     });
 
-    // Global rotation
+    // Global rotation (default 0 = static, user can increase)
     scene3d.rotation.y = time3d * hud3d.rotationSpeed;
 
     // Links
@@ -4036,6 +4848,15 @@ async function init3DScene() {
 
     linkDataArr3d.forEach(ld => {
       const mat = ld.line.material;
+
+      // Hide links to/from hidden (collapsed) nodes
+      if (hiddenNodes3d.has(ld.sourceId) || hiddenNodes3d.has(ld.targetId)) {
+        mat.opacity = 0;
+        ld.line.visible = false;
+        return;
+      }
+      ld.line.visible = true;
+
       const isConn = activeId && (ld.sourceId === activeId || ld.targetId === activeId);
 
       const srcPos = meshes3d[ld.sourceIdx].position;
@@ -4047,7 +4868,7 @@ async function init3DScene() {
       ld.line.geometry.attributes.position.needsUpdate = true;
 
       if (showAll) {
-        mat.opacity = 0.04;
+        mat.opacity = isConn ? hud3d.linkOpacity : 0.2;
       } else if (isConn) {
         mat.opacity = hud3d.linkOpacity;
       } else {
@@ -4151,41 +4972,55 @@ async function init3DScene() {
     mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
     raycaster.setFromCamera(mouse, camera3d);
-    const intersects = raycaster.intersectObjects(meshes3d);
+    const intersects = raycaster.intersectObjects(meshes3d.filter(m => m.visible));
 
     if (intersects.length > 0) {
       const clicked = intersects[0].object.userData.node;
+
+      // Toggle collapse/expand if node has children
+      const hasChildren = childrenMap3d.has(clicked.id) && childrenMap3d.get(clicked.id).length > 0;
+      if (hasChildren) {
+        if (collapsedNodes3d.has(clicked.id)) {
+          collapsedNodes3d.delete(clicked.id);
+        } else {
+          collapsedNodes3d.add(clicked.id);
+        }
+        recomputeHidden3d();
+      }
+
+      // Select/deselect
       if (selectedNode3d === clicked.id) {
         selectedNode3d = null;
         activeNode3d = null;
       } else {
         selectedNode3d = clicked.id;
         activeNode3d = clicked.id;
-        // Highlight selected mesh
-        meshes3d.forEach(m => {
-          m.material.emissive.setHex(
-            m.userData.isOrphan ? 0xE74C3C :
-            (m.userData.node.id === clicked.id ? 0xffffff : (TYPE_COLORS_3D[m.userData.node.type] || 0x888888))
-          );
-          if (!m.userData.isOrphan) {
-            m.material.emissiveIntensity = m.userData.node.id === clicked.id ? 0.6 : 0.1;
-          }
-        });
       }
-      // Show in detail drawer (reuse 2D panel)
+
+      // Show in detail drawer
       selectNode(clicked);
+
+      // Fly camera toward clicked node
+      const clickedMesh = intersects[0].object;
+      const pos = clickedMesh.position;
+      const dist = Math.max(8, hud3d.camDistance * 0.5);
+      flyTarget3d = { x: pos.x, y: pos.y, z: pos.z, dist, t: 0 };
     }
   });
 
   canvas.addEventListener('dblclick', () => {
+    // Double-click: reset everything (deselect + expand all)
     selectedNode3d = null;
     activeNode3d = null;
+    flyTarget3d = null;
+    collapsedNodes3d.clear();
+    recomputeHidden3d();
   });
 
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? 1.5 : -1.5;
-    hud3d.camDistance = Math.max(5, Math.min(60, hud3d.camDistance + delta));
+    hud3d.camDistance = Math.max(3, Math.min(120, hud3d.camDistance + delta));
     document.getElementById('hud-cam-dist').value = hud3d.camDistance;
     document.getElementById('hud-cam-val').textContent = Math.round(hud3d.camDistance);
   }, { passive: false });
@@ -4245,180 +5080,6 @@ function buildCommunityMap(communities) {
   return map;
 }
 
-// --- Flat Force: 3D force with tier-based charges + parent clustering ---
-function run3DFlatForce(nodes, edges, nodeMap3d, adj3d) {
-  const CHARGE = { macro: 4, meso: 2, micro: 1 };
-  const positions = nodes.map((n, i) => {
-    const m = meshes3d[i];
-    return {
-      x: m.userData.flatPos.x, y: m.userData.flatPos.y, z: m.userData.flatPos.z,
-      vx: 0, vy: 0, vz: 0,
-      tier: n.tier || NODE_TIER[n.type] || 'micro',
-      parent_id: n.parent_id,
-    };
-  });
-
-  const edgeList = edges.map(e => ({
-    src: nodeMap3d.get(e.source_id || e.source),
-    tgt: nodeMap3d.get(e.target_id || e.target),
-    type: e.type,
-  })).filter(e => e.src !== undefined && e.tgt !== undefined);
-
-  const nodeIdxById = {};
-  nodes.forEach((n, i) => { nodeIdxById[n.id] = i; });
-
-  for (let iter = 0; iter < 120; iter++) {
-    const alpha = 0.3 * (1 - iter / 120);
-
-    // Tier-based repulsion
-    for (let i = 0; i < positions.length; i++) {
-      for (let j = i + 1; j < Math.min(positions.length, i + 60); j++) {
-        const dx = positions[i].x - positions[j].x;
-        const dy = positions[i].y - positions[j].y;
-        const dz = positions[i].z - positions[j].z;
-        const dist2 = dx*dx + dy*dy + dz*dz + 0.01;
-        const ci = CHARGE[positions[i].tier] || 1;
-        const cj = CHARGE[positions[j].tier] || 1;
-        const force = alpha * (ci + cj) / dist2;
-        positions[i].vx += dx * force; positions[i].vy += dy * force; positions[i].vz += dz * force;
-        positions[j].vx -= dx * force; positions[j].vy -= dy * force; positions[j].vz -= dz * force;
-      }
-    }
-
-    // Edge-type based attraction
-    edgeList.forEach(({ src, tgt, type }) => {
-      const dx = positions[tgt].x - positions[src].x;
-      const dy = positions[tgt].y - positions[src].y;
-      const dz = positions[tgt].z - positions[src].z;
-      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) + 0.01;
-      const targetDist = (type === 'CONTAINS' || type === 'DEFINES') ? 2 :
-                         (type === 'IMPORTS') ? 4 : 5;
-      const force = alpha * (dist - targetDist) * 0.06;
-      positions[src].vx += dx/dist * force; positions[src].vy += dy/dist * force; positions[src].vz += dz/dist * force;
-      positions[tgt].vx -= dx/dist * force; positions[tgt].vy -= dy/dist * force; positions[tgt].vz -= dz/dist * force;
-    });
-
-    // Parent clustering — pull children toward parent
-    positions.forEach((p, i) => {
-      if (p.parent_id && nodeIdxById[p.parent_id] !== undefined) {
-        const pp = positions[nodeIdxById[p.parent_id]];
-        p.vx += (pp.x - p.x) * alpha * 0.06;
-        p.vy += (pp.y - p.y) * alpha * 0.06;
-        p.vz += (pp.z - p.z) * alpha * 0.04;
-      }
-    });
-
-    // Centering + damping
-    let cx = 0, cy = 0, cz = 0;
-    positions.forEach(p => { cx += p.x; cy += p.y; cz += p.z; });
-    cx /= positions.length; cy /= positions.length; cz /= positions.length;
-    positions.forEach(p => {
-      p.vx *= 0.6; p.vy *= 0.6; p.vz *= 0.6;
-      p.x += p.vx - cx * 0.01; p.y += p.vy - cy * 0.01; p.z += p.vz - cz * 0.01;
-    });
-  }
-
-  meshes3d.forEach((mesh, i) => {
-    if (positions[i]) {
-      mesh.userData.flatPos.set(positions[i].x, positions[i].y, positions[i].z);
-      if (layout3d === 'flat') {
-        mesh.userData.currentPos.copy(mesh.userData.flatPos);
-        mesh.position.copy(mesh.userData.flatPos);
-      }
-    }
-  });
-}
-
-// --- Zones Force: 3D force with type-zone X, tier Y constraints ---
-function run3DZonesForce(nodes, edges, nodeMap3d, adj3d) {
-  const CHARGE = { macro: 4, meso: 2, micro: 1 };
-  const TIER_Y = { macro: 5, meso: 0, micro: -5 };
-  const positions = nodes.map((n, i) => {
-    const m = meshes3d[i];
-    return {
-      x: m.userData.zonesPos.x, y: m.userData.zonesPos.y, z: m.userData.zonesPos.z,
-      vx: 0, vy: 0, vz: 0,
-      tier: n.tier || NODE_TIER[n.type] || 'micro',
-      typeZone: TYPE_ZONE[n.type] || 0.5,
-      parent_id: n.parent_id,
-    };
-  });
-
-  const edgeList = edges.map(e => ({
-    src: nodeMap3d.get(e.source_id || e.source),
-    tgt: nodeMap3d.get(e.target_id || e.target),
-    type: e.type,
-  })).filter(e => e.src !== undefined && e.tgt !== undefined);
-
-  const nodeIdxById = {};
-  nodes.forEach((n, i) => { nodeIdxById[n.id] = i; });
-
-  for (let iter = 0; iter < 100; iter++) {
-    const alpha = 0.3 * (1 - iter / 100);
-
-    // Tier-based repulsion
-    for (let i = 0; i < positions.length; i++) {
-      for (let j = i + 1; j < Math.min(positions.length, i + 50); j++) {
-        const dx = positions[i].x - positions[j].x;
-        const dy = positions[i].y - positions[j].y;
-        const dz = positions[i].z - positions[j].z;
-        const dist2 = dx*dx + dy*dy + dz*dz + 0.01;
-        const ci = CHARGE[positions[i].tier] || 1;
-        const cj = CHARGE[positions[j].tier] || 1;
-        const force = alpha * (ci + cj) / dist2;
-        positions[i].vx += dx * force; positions[i].vy += dy * force; positions[i].vz += dz * force;
-        positions[j].vx -= dx * force; positions[j].vy -= dy * force; positions[j].vz -= dz * force;
-      }
-    }
-
-    // Edge attraction with type-based distances
-    edgeList.forEach(({ src, tgt, type }) => {
-      const dx = positions[tgt].x - positions[src].x;
-      const dy = positions[tgt].y - positions[src].y;
-      const dz = positions[tgt].z - positions[src].z;
-      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) + 0.01;
-      const targetDist = (type === 'CONTAINS' || type === 'DEFINES') ? 2 :
-                         (type === 'IMPORTS') ? 4 : 5;
-      const force = alpha * (dist - targetDist) * 0.06;
-      positions[src].vx += dx/dist * force; positions[src].vy += dy/dist * force; positions[src].vz += dz/dist * force;
-      positions[tgt].vx -= dx/dist * force; positions[tgt].vy -= dy/dist * force; positions[tgt].vz -= dz/dist * force;
-    });
-
-    // Constrain: pull X toward type zone, Y toward tier layer
-    positions.forEach(p => {
-      const targetX = (p.typeZone - 0.5) * 20;
-      const tierY = TIER_Y[p.tier] || -5;
-      p.vx += (targetX - p.x) * alpha * 0.15;
-      p.vy += (tierY - p.y) * alpha * 0.12;
-    });
-
-    // Parent clustering
-    positions.forEach((p, i) => {
-      if (p.parent_id && nodeIdxById[p.parent_id] !== undefined) {
-        const pp = positions[nodeIdxById[p.parent_id]];
-        p.vx += (pp.x - p.x) * alpha * 0.05;
-        p.vy += (pp.y - p.y) * alpha * 0.05;
-        p.vz += (pp.z - p.z) * alpha * 0.04;
-      }
-    });
-
-    // Damping
-    positions.forEach(p => {
-      p.vx *= 0.6; p.vy *= 0.6; p.vz *= 0.6;
-      p.x += p.vx; p.y += p.vy; p.z += p.vz;
-    });
-  }
-
-  meshes3d.forEach((mesh, i) => {
-    if (positions[i]) {
-      mesh.userData.zonesPos.set(positions[i].x, positions[i].y, positions[i].z);
-      if (layout3d === 'zones') {
-        mesh.userData.currentPos.copy(mesh.userData.zonesPos);
-        mesh.position.copy(mesh.userData.zonesPos);
-      }
-    }
-  });
-}
 
 // --- Destroy 3D scene ---
 function destroy3DScene() {
@@ -4434,6 +5095,14 @@ function destroy3DScene() {
       scene3d.remove(mesh);
     });
     meshes3d = [];
+
+    // Dispose labels
+    labelSprites3d.forEach(sprite => {
+      sprite.material.map.dispose();
+      sprite.material.dispose();
+      scene3d.remove(sprite);
+    });
+    labelSprites3d = [];
 
     // Dispose links
     linkLines3d.forEach(line => {
@@ -4473,7 +5142,6 @@ function destroy3DScene() {
 
 // --- Layout mode switch ---
 function set3DLayout(mode) {
-  layout3d = mode;
   document.querySelectorAll('.layout-toggle-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.layout === mode);
   });
@@ -4501,9 +5169,10 @@ function startDiscoveryReplay() {
     return (tierOrder[ta] || 2) - (tierOrder[tb] || 2);
   });
 
-  // Hide all nodes and links
+  // Hide all nodes, links, and labels
   sorted.forEach(m => { m.visible = false; m.scale.setScalar(0); });
   linkLines3d.forEach(l => { l.visible = false; });
+  labelSprites3d.forEach(l => { l.visible = false; });
 
   // Reveal nodes one by one
   const totalDuration = 5000;
@@ -4512,6 +5181,11 @@ function startDiscoveryReplay() {
   sorted.forEach((mesh, i) => {
     setTimeout(() => {
       mesh.visible = true;
+      // Show label too
+      const labelIdx = mesh.userData.index;
+      if (labelIdx < labelSprites3d.length && hud3d.showLabels) {
+        labelSprites3d[labelIdx].visible = true;
+      }
       // Scale up animation
       const activeSize = hud3d.scaleByPageRank ? mesh.userData.pagerankSize : mesh.userData.defaultSize;
       const targetScale = activeSize * hud3d.nodeSize;
