@@ -3980,111 +3980,88 @@ function _sphereHash(seed, data) {
 }
 
 function apply3DSphereLayout(nodes) {
-  // True spherical burst: root at center, children spread outward
-  // in ALL directions. Each parent's children form a ring perpendicular
-  // to the parent's radial direction, on a larger shell.
+  // Spherical subdivision: root at center, each node owns a patch on
+  // the sphere. Children subdivide parent's patch. Depth = shell radius.
+  // Uses area-preserving (cosTheta, phi) coords so patches stay even.
   const { children, nodeSet, roots, subtreeW } = _build3DHierarchy(nodes);
 
-  const SHELL_SPACING = 90;  // distance outward per depth level
+  const SHELL_SPACING = 80;  // radius increase per depth level
 
-  // Helper: build orthonormal basis for a ring perpendicular to direction `dir`
-  function _perpBasis(dir) {
-    // Find a vector not parallel to dir
-    const up = Math.abs(dir.y) < 0.9
-      ? new THREE.Vector3(0, 1, 0)
-      : new THREE.Vector3(1, 0, 0);
-    const u = new THREE.Vector3().crossVectors(dir, up).normalize();
-    const v = new THREE.Vector3().crossVectors(dir, u).normalize();
-    return { u, v };
-  }
-
-  // Position node, then spread children outward in a ring perpendicular
-  // to the radial direction from center through this node
-  function positionNode(nid, depth, pos) {
+  // Place node at center of its spherical patch, subdivide patch for children
+  // Patch: [ctMin..ctMax] x [phiMin..phiMax] in area-preserving coords
+  // cosTheta ∈ [-1, 1] maps to pole-to-pole, phi ∈ [0, 2π] wraps around
+  function positionNode(nid, depth, ctMin, ctMax, phiMin, phiMax) {
     const mesh = threeNodeMeshes.get(nid);
     if (!mesh) return;
-    mesh.position.copy(pos);
+
+    const ct = (ctMin + ctMax) / 2;       // cosTheta center
+    const phi = (phiMin + phiMax) / 2;    // phi center
+    const r = depth === 0 ? 0 : SHELL_SPACING * depth;
+
+    const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
+    mesh.position.set(
+      r * sinT * Math.cos(phi),
+      r * ct,
+      r * sinT * Math.sin(phi)
+    );
 
     const kids = (children.get(nid) || []).filter(c => nodeSet.has(c));
     if (kids.length === 0) return;
 
-    // Direction from center to this node (radial outward)
-    const dir = pos.length() > 0.01
-      ? pos.clone().normalize()
-      : new THREE.Vector3(0, 1, 0); // fallback for root at origin
+    const totalW = subtreeW.get(nid) || 1;
+    const ctSpan = ctMax - ctMin;
+    const phiSpan = phiMax - phiMin;
 
-    const childR = SHELL_SPACING * (depth + 1);
-
-    if (kids.length === 1) {
-      // Single child: continue outward in same direction, slight offset
-      const cid = kids[0];
-      const childPos = dir.clone().multiplyScalar(childR);
-      // Tiny perpendicular nudge so it's not exactly on parent's line
-      const { u } = _perpBasis(dir);
-      childPos.add(u.clone().multiplyScalar(8));
-      positionNode(cid, depth + 1, childPos);
-    } else {
-      // Multiple children: form a ring perpendicular to radial direction
-      // Ring is centered on the outward direction, at the next shell distance
-      const { u, v } = _perpBasis(dir);
-      const ringR = 20 + kids.length * 10; // ring spread
-      const totalW = subtreeW.get(nid) || 1;
-      let curAngle = 0;
-
+    // Subdivide along the wider dimension for roughly square patches
+    if (phiSpan * 0.5 >= ctSpan && kids.length > 1) {
+      // Split along phi
+      let cur = phiMin;
       for (const cid of kids) {
         const cw = subtreeW.get(cid) || 1;
-        const wedge = (cw / totalW) * Math.PI * 2;
-        const midAngle = curAngle + wedge / 2;
-
-        // Point on the ring: outward along dir + ring offset on perpendicular plane
-        const childPos = dir.clone().multiplyScalar(childR);
-        childPos.add(u.clone().multiplyScalar(ringR * Math.cos(midAngle)));
-        childPos.add(v.clone().multiplyScalar(ringR * Math.sin(midAngle)));
-
-        positionNode(cid, depth + 1, childPos);
-        curAngle += wedge;
+        const span = (cw / totalW) * phiSpan;
+        positionNode(cid, depth + 1, ctMin, ctMax, cur, cur + span);
+        cur += span;
       }
+    } else if (kids.length > 1) {
+      // Split along cosTheta
+      let cur = ctMin;
+      for (const cid of kids) {
+        const cw = subtreeW.get(cid) || 1;
+        const span = (cw / totalW) * ctSpan;
+        positionNode(cid, depth + 1, cur, cur + span, phiMin, phiMax);
+        cur += span;
+      }
+    } else {
+      // Single child: inherit parent's patch
+      positionNode(kids[0], depth + 1, ctMin, ctMax, phiMin, phiMax);
     }
   }
 
   if (roots.length === 1) {
-    // Single root at center
-    const rootPos = new THREE.Vector3(0, 0, 0);
-    const mesh = threeNodeMeshes.get(roots[0].id);
-    if (mesh) mesh.position.set(0, 0, 0);
+    // Root at center, children get the full sphere
+    const rootMesh = threeNodeMeshes.get(roots[0].id);
+    if (rootMesh) rootMesh.position.set(0, 0, 0);
 
-    // Root's children: distribute on first shell using Fibonacci sphere
     const kids = (children.get(roots[0].id) || []).filter(c => nodeSet.has(c));
-    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
-    for (let i = 0; i < kids.length; i++) {
-      const cid = kids[i];
-      const y = 1 - (2 * i + 1) / (kids.length * 2);
-      const theta = Math.acos(Math.max(-1, Math.min(1, y)));
-      const phi = goldenAngle * i;
-      const sinT = Math.sin(theta);
-      const childPos = new THREE.Vector3(
-        SHELL_SPACING * sinT * Math.cos(phi),
-        SHELL_SPACING * y,
-        SHELL_SPACING * sinT * Math.sin(phi)
-      );
-      positionNode(cid, 1, childPos);
+    const totalW = subtreeW.get(roots[0].id) || 1;
+
+    // Distribute root's children across full sphere [ct: -1..1, phi: 0..2π]
+    let curPhi = 0;
+    for (const cid of kids) {
+      const cw = subtreeW.get(cid) || 1;
+      const phiSpan = (cw / totalW) * Math.PI * 2;
+      positionNode(cid, 1, -1, 1, curPhi, curPhi + phiSpan);
+      curPhi += phiSpan;
     }
   } else {
-    // Multiple roots: spread on a small inner shell with Fibonacci
-    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
-    for (let i = 0; i < roots.length; i++) {
-      const r = roots[i];
-      const y = 1 - (2 * i + 1) / (roots.length * 2);
-      const theta = Math.acos(Math.max(-1, Math.min(1, y)));
-      const phi = goldenAngle * i;
-      const sinT = Math.sin(theta);
-      const innerR = 30;
-      const rootPos = new THREE.Vector3(
-        innerR * sinT * Math.cos(phi),
-        innerR * y,
-        innerR * sinT * Math.sin(phi)
-      );
-      positionNode(r.id, 0, rootPos);
+    // Multiple roots: each gets a phi wedge of the full sphere
+    const totalW = roots.reduce((s, r) => s + (subtreeW.get(r.id) || 1), 0);
+    let curPhi = 0;
+    for (const r of roots) {
+      const rw = subtreeW.get(r.id) || 1;
+      const phiSpan = (rw / totalW) * Math.PI * 2;
+      positionNode(r.id, 0, -1, 1, curPhi, curPhi + phiSpan);
+      curPhi += phiSpan;
     }
   }
 }
