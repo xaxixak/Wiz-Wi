@@ -661,7 +661,7 @@ body {
         <button class="layer-btn layout-btn active" id="btn-layout-force" onclick="setLayoutMode('force')" title="Force-directed physics layout">Force</button>
         <button class="layer-btn layout-btn" id="btn-layout-tree" onclick="setLayoutMode('tree')" title="Top-down tree hierarchy layout">Tree</button>
         <button class="layer-btn layout-btn" id="btn-layout-radial" onclick="setLayoutMode('radial')" title="Radial rings from root">Radial</button>
-        <button class="layer-btn layout-btn" id="btn-layout-grid" onclick="setLayoutMode('grid')" title="Grid sorted by type">Grid</button>
+        <button class="layer-btn layout-btn" id="btn-layout-sphere" onclick="setLayoutMode('sphere')" title="Sphere layout - depth from center outward">Sphere</button>
         <span style="color:var(--border);margin:0 2px;">|</span>
         <button class="layer-btn" id="btn-3d-toggle" onclick="toggle3D()" title="Switch between 2D and 3D view" style="font-weight:700;">3D</button>
       </div>
@@ -1598,8 +1598,8 @@ function updateGraph() {
     applyRadialLayout(nodes);
     simulation.stop();
     ticked();
-  } else if (layoutMode === 'grid') {
-    applyGridLayout(nodes);
+  } else if (layoutMode === 'sphere') {
+    applySphereLayout(nodes);
     simulation.stop();
     ticked();
   } else {
@@ -3149,40 +3149,36 @@ function applyRadialLayout(nodes) {
 }
 
 // -----------------------------------------------------------------------
-// Grid Layout — nodes sorted by type then name, arranged in a grid
+// Sphere Layout — concentric rings from center outward by depth (2D projection)
 // -----------------------------------------------------------------------
-function applyGridLayout(nodes) {
+function applySphereLayout(nodes) {
   const container = document.getElementById('graph-container');
   const width = container.clientWidth;
   const height = container.clientHeight;
+  const cx = width / 2, cy = height / 2;
 
-  // Sort: by type priority (macro > meso > micro), then by type name, then by name
-  const tierOrder = { macro: 0, meso: 1, micro: 2 };
-  const sorted = [...nodes].sort((a, b) => {
-    const ta = tierOrder[a.tier || NODE_TIER[a.type] || 'micro'] ?? 2;
-    const tb = tierOrder[b.tier || NODE_TIER[b.type] || 'micro'] ?? 2;
-    if (ta !== tb) return ta - tb;
-    if (a.type !== b.type) return a.type.localeCompare(b.type);
-    return (a.name || '').localeCompare(b.name || '');
-  });
+  // Group by depth
+  const depthGroups = new Map();
+  for (const n of nodes) {
+    const d = nodeDepthMap.get(n.id) ?? 4;
+    if (!depthGroups.has(d)) depthGroups.set(d, []);
+    depthGroups.get(d).push(n);
+  }
 
-  // Calculate grid dimensions
-  const count = sorted.length;
-  const cols = Math.ceil(Math.sqrt(count * (width / height)));
-  const cellW = Math.max(60, (width - 80) / cols);
-  const cellH = Math.max(60, cellW * 0.8);
-  const startX = 40;
-  const startY = 40;
+  const maxDepth = Math.max(...depthGroups.keys(), 1);
+  const maxRadius = Math.min(width, height) * 0.42;
 
-  for (let i = 0; i < sorted.length; i++) {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const x = startX + col * cellW + cellW / 2;
-    const y = startY + row * cellH + cellH / 2;
-    sorted[i].fx = x;
-    sorted[i].fy = y;
-    sorted[i].x = x;
-    sorted[i].y = y;
+  for (const [depth, group] of depthGroups) {
+    const ringR = (depth / maxDepth) * maxRadius;
+    for (let i = 0; i < group.length; i++) {
+      const angle = (i / group.length) * Math.PI * 2;
+      const x = cx + ringR * Math.cos(angle);
+      const y = cy + ringR * Math.sin(angle);
+      group[i].fx = x;
+      group[i].fy = y;
+      group[i].x = x;
+      group[i].y = y;
+    }
   }
 }
 
@@ -3210,8 +3206,8 @@ function setLayoutMode(mode) {
     applyRadialLayout(nodes);
     simulation.stop();
     ticked();
-  } else if (mode === 'grid') {
-    applyGridLayout(nodes);
+  } else if (mode === 'sphere') {
+    applySphereLayout(nodes);
     simulation.stop();
     ticked();
   }
@@ -3219,6 +3215,7 @@ function setLayoutMode(mode) {
   // If 3D is active, rebuild 3D layout
   if (is3D && threeScene && threeControls) {
     apply3DLayout(nodes);
+    _storeBasePositions();
     update3DEdgePositions();
     fit3DCamera(nodes);
   }
@@ -3728,6 +3725,7 @@ function build3DGraph() {
 
   // Apply current layout mode in 3D
   apply3DLayout(nodes);
+  _storeBasePositions();
 
   // Update edge positions
   update3DEdgePositions();
@@ -3740,7 +3738,7 @@ function apply3DLayout(nodes) {
   if (layoutMode === 'force') apply3DForceLayout(nodes);
   else if (layoutMode === 'tree') apply3DTreeLayout(nodes);
   else if (layoutMode === 'radial') apply3DRadialLayout(nodes);
-  else if (layoutMode === 'grid') apply3DGridLayout(nodes);
+  else if (layoutMode === 'sphere') apply3DSphereLayout(nodes);
 }
 
 function apply3DForceLayout(nodes) {
@@ -3972,40 +3970,52 @@ function apply3DRadialLayout(nodes) {
   }
 }
 
-function apply3DGridLayout(nodes) {
-  const sorted = [...nodes].sort((a, b) => {
-    const ta = NODE_TIER[a.type] || 'micro';
-    const tb = NODE_TIER[b.type] || 'micro';
-    const tierOrder = { macro: 0, meso: 1, micro: 2 };
-    if (tierOrder[ta] !== tierOrder[tb]) return tierOrder[ta] - tierOrder[tb];
-    if (a.type !== b.type) return a.type.localeCompare(b.type);
-    return a.name.localeCompare(b.name);
-  });
+// Hash function for deterministic sphere distribution (from Oracle v2)
+function _sphereHash(seed, data) {
+  let h = ((seed + 374761393) >>> 0);
+  h = ((h + (data * 3266489917 >>> 0)) >>> 0);
+  h = ((((h << 17) | (h >>> 15)) * 668265263) >>> 0);
+  h ^= h >>> 15;
+  h = ((h * 2246822519) >>> 0);
+  h ^= h >>> 13;
+  h = ((h * 3266489917) >>> 0);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
 
-  // 3D grid: arrange in layers by tier, each tier a grid on XZ, stacked on Y
-  const tierGroups = { macro: [], meso: [], micro: [] };
-  for (const d of sorted) {
-    const t = d.tier || NODE_TIER[d.type] || 'micro';
-    (tierGroups[t] || tierGroups.micro).push(d);
+function apply3DSphereLayout(nodes) {
+  // Group nodes by depth — each depth = one sphere shell
+  const depthGroups = new Map();
+  for (const d of nodes) {
+    const depth = nodeDepthMap.get(d.id) ?? 4;
+    if (!depthGroups.has(depth)) depthGroups.set(depth, []);
+    depthGroups.get(depth).push(d);
   }
 
-  const SPACING = 50;
-  const TIER_Y = { macro: 200, meso: 80, micro: -40 };
-  for (const [tier, group] of Object.entries(tierGroups)) {
-    if (group.length === 0) continue;
-    const cols = Math.max(1, Math.ceil(Math.sqrt(group.length)));
-    const rows = Math.ceil(group.length / cols);
-    const y = TIER_Y[tier] || 0;
+  const maxDepth = Math.max(...depthGroups.keys(), 1);
+  const INNER_RADIUS = 40;   // root shell radius
+  const SHELL_SPACING = 80;  // radius increase per depth
+
+  for (const [depth, group] of depthGroups) {
+    const shellRadius = INNER_RADIUS + depth * SHELL_SPACING;
+
     for (let i = 0; i < group.length; i++) {
       const mesh = threeNodeMeshes.get(group[i].id);
       if (!mesh) continue;
-      const col = i % cols;
-      const row = Math.floor(i / cols);
+
+      // Deterministic position on sphere shell using golden spiral
+      const phi = _sphereHash(42, i + depth * 1000) * Math.PI * 2;
+      const cosTheta = _sphereHash(43, i + depth * 1000) * 2 - 1;
+      const sinTheta = Math.sqrt(1 - cosTheta * cosTheta);
+
       mesh.position.set(
-        (col - cols / 2) * SPACING,
-        y,
-        (row - rows / 2) * SPACING
+        shellRadius * sinTheta * Math.cos(phi),
+        shellRadius * cosTheta,
+        shellRadius * sinTheta * Math.sin(phi)
       );
+
+      // Store base position for floating animation
+      mesh.userData._basePos = mesh.position.clone();
     }
   }
 }
@@ -4049,34 +4059,95 @@ function fit3DCamera(nodes) {
   threeControls.update();
 }
 
+// Noise for floating animation
+function _noise1D(p, seed) {
+  const i = Math.floor(p);
+  const f = p - i;
+  const u = f * f * (3 - 2 * f);
+  const g0 = _sphereHash(seed, i) * 2 - 1;
+  const g1 = _sphereHash(seed, i + 1) * 2 - 1;
+  return g0 * (1 - u) + g1 * u;
+}
+
+function _fractalNoise(p, octaves, seed) {
+  let f = 0, w = 1, max = 0;
+  for (let i = 0; i < octaves; i++) {
+    f += w * _noise1D(p, seed + i);
+    max += w;
+    p *= 2;
+    w *= 0.5;
+  }
+  return f / max;
+}
+
+// Store base positions after layout (for floating offset)
+function _storeBasePositions() {
+  threeNodeMeshes.forEach((mesh) => {
+    mesh.userData._basePos = mesh.position.clone();
+  });
+}
+
+let _3dTime = 0;
+const BREATHING_INTENSITY = 0.06;  // how much nodes float
+const BREATHING_SPEED = 0.4;       // how fast they drift
+
 function animate3D() {
   if (!is3D) return;
   threeAnimId = requestAnimationFrame(animate3D);
   threeControls.update();
+  _3dTime += 1 / 60;
 
-  // In force mode, update positions from simulation
+  // In force mode, update base positions from simulation
   if (layoutMode === 'force' && simulation) {
     const nodes = simulation.nodes();
     for (const d of nodes) {
       const mesh = threeNodeMeshes.get(d.id);
       if (!mesh) continue;
       const depth = nodeDepthMap.get(d.id) ?? 4;
-      mesh.position.x = (d.x || 0) - 400;
-      mesh.position.z = (d.y || 0) - 300;
-      mesh.position.y = (5 - depth) * 40;
+      const bx = (d.x || 0) - 400;
+      const bz = (d.y || 0) - 300;
+      const by = (5 - depth) * 60;
+      if (!mesh.userData._basePos) mesh.userData._basePos = new THREE.Vector3();
+      mesh.userData._basePos.set(bx, by, bz);
     }
-    update3DEdgePositions();
   }
 
-  // Highlight selected node
+  // Floating animation: offset each node from its base position using noise
+  let idx = 0;
+  let edgesNeedUpdate = false;
   threeNodeMeshes.forEach((mesh, id) => {
+    const base = mesh.userData._basePos;
+    if (base) {
+      const t = _3dTime * BREATHING_SPEED;
+      const nx = _fractalNoise(t + idx * 0.17, 2, 42) * BREATHING_INTENSITY;
+      const ny = _fractalNoise(t + idx * 0.23, 2, 99) * BREATHING_INTENSITY;
+      const nz = _fractalNoise(t + idx * 0.31, 2, 157) * BREATHING_INTENSITY;
+
+      // Scale breathing by distance from center (further = more float)
+      const dist = base.length() || 1;
+      const scale = 1 + dist * 0.002;
+
+      mesh.position.set(
+        base.x + base.x * nx * scale,
+        base.y + base.y * ny * scale + Math.sin(t + idx * 0.5) * 2,
+        base.z + base.z * nz * scale
+      );
+      edgesNeedUpdate = true;
+    }
+
+    // Gentle rotation per node
+    mesh.rotation.y = _3dTime * 0.15 + idx * 0.01;
+
+    // Highlight selected node
     if (id === selectedNodeId) {
-      mesh.material.wireframe = false;
-      mesh.scale.setScalar(1.2);
+      mesh.scale.setScalar(1.3);
     } else {
       mesh.scale.setScalar(1.0);
     }
+    idx++;
   });
+
+  if (edgesNeedUpdate) update3DEdgePositions();
 
   threeRenderer.render(threeScene, threeCamera);
 }
