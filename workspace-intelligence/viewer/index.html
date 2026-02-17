@@ -3984,38 +3984,118 @@ function _sphereHash(seed, data) {
 }
 
 function apply3DSphereLayout(nodes) {
-  // Group nodes by depth — each depth = one sphere shell
-  const depthGroups = new Map();
-  for (const d of nodes) {
-    const depth = nodeDepthMap.get(d.id) ?? 4;
-    if (!depthGroups.has(depth)) depthGroups.set(depth, []);
-    depthGroups.get(depth).push(d);
+  // Hierarchical 3D burst: root at center, children spread outward
+  // near their parent in spherical directions. Like tree/radial but 3D.
+  const { children, nodeSet, roots, subtreeW } = _build3DHierarchy(nodes);
+
+  const SHELL_SPACING = 100;  // distance outward per depth level
+
+  // Position a node at a point on its depth shell, spread children
+  // in a cone outward from center through parent's position
+  function positionNode(nid, depth, dirTheta, dirPhi, coneHalf) {
+    const mesh = threeNodeMeshes.get(nid);
+    if (!mesh) return;
+
+    const r = depth === 0 ? 0 : SHELL_SPACING * depth;
+    // Convert spherical (theta=polar from Y, phi=azimuth on XZ) to cartesian
+    const sinT = Math.sin(dirTheta);
+    mesh.position.set(
+      r * sinT * Math.cos(dirPhi),
+      r * Math.cos(dirTheta),
+      r * sinT * Math.sin(dirPhi)
+    );
+
+    const kids = (children.get(nid) || []).filter(c => nodeSet.has(c));
+    if (kids.length === 0) return;
+
+    // Children spread in a cone around parent's direction
+    // Cone gets narrower as subtree gets smaller (fewer children = tighter)
+    const totalW = subtreeW.get(nid) || 1;
+
+    if (depth === 0) {
+      // Root: children spread over full sphere
+      // Distribute using golden angle for even coverage
+      const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+      for (let i = 0; i < kids.length; i++) {
+        const cid = kids[i];
+        // Fibonacci sphere distribution
+        const y = 1 - (2 * i + 1) / (kids.length * 2); // -1 to 1
+        const childTheta = Math.acos(Math.max(-1, Math.min(1, y)));
+        const childPhi = goldenAngle * i;
+        const cw = subtreeW.get(cid) || 1;
+        const childCone = Math.PI * (cw / totalW) * 0.8;
+        positionNode(cid, depth + 1, childTheta, childPhi, childCone);
+      }
+    } else {
+      // Non-root: children spread in a cone around parent's direction
+      // Subdivide the parent's cone among children proportionally
+      if (kids.length === 1) {
+        // Single child: same direction as parent, slightly spread
+        const cid = kids[0];
+        const cw = subtreeW.get(cid) || 1;
+        positionNode(cid, depth + 1, dirTheta, dirPhi, coneHalf * 0.8);
+      } else {
+        // Multiple children: arrange in a ring tilted toward parent direction
+        // Each child gets a wedge of the cone proportional to subtree width
+        let curAngle = 0;
+        const fullCircle = Math.PI * 2;
+        for (const cid of kids) {
+          const cw = subtreeW.get(cid) || 1;
+          const wedge = (cw / totalW) * fullCircle;
+          const midAngle = curAngle + wedge / 2;
+
+          // Offset from parent direction: spread within cone
+          const spreadR = Math.min(coneHalf, 0.3 + kids.length * 0.05);
+          const offTheta = dirTheta + spreadR * Math.cos(midAngle);
+          const offPhi = dirPhi + (spreadR * Math.sin(midAngle)) / Math.max(Math.sin(dirTheta), 0.3);
+
+          const childCone = spreadR * (cw / totalW);
+          positionNode(cid, depth + 1, offTheta, offPhi, childCone);
+          curAngle += wedge;
+        }
+      }
+    }
   }
 
-  const maxDepth = Math.max(...depthGroups.keys(), 1);
-  const INNER_RADIUS = 40;   // root shell radius
-  const SHELL_SPACING = 80;  // radius increase per depth
-
-  for (const [depth, group] of depthGroups) {
-    const shellRadius = INNER_RADIUS + depth * SHELL_SPACING;
-
-    for (let i = 0; i < group.length; i++) {
-      const mesh = threeNodeMeshes.get(group[i].id);
-      if (!mesh) continue;
-
-      // Deterministic position on sphere shell using golden spiral
-      const phi = _sphereHash(42, i + depth * 1000) * Math.PI * 2;
-      const cosTheta = _sphereHash(43, i + depth * 1000) * 2 - 1;
-      const sinTheta = Math.sqrt(1 - cosTheta * cosTheta);
-
-      mesh.position.set(
-        shellRadius * sinTheta * Math.cos(phi),
-        shellRadius * cosTheta,
-        shellRadius * sinTheta * Math.sin(phi)
-      );
-
-      // Store base position for floating animation
-      mesh.userData._basePos = mesh.position.clone();
+  if (roots.length === 1) {
+    positionNode(roots[0].id, 0, 0, 0, Math.PI);
+  } else {
+    // Multiple roots: spread on a small inner shell
+    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+    const totalW = roots.reduce((s, r) => s + (subtreeW.get(r.id) || 1), 0);
+    for (let i = 0; i < roots.length; i++) {
+      const r = roots[i];
+      const y = 1 - (2 * i + 1) / (roots.length * 2);
+      const theta = Math.acos(Math.max(-1, Math.min(1, y)));
+      const phi = goldenAngle * i;
+      const mesh = threeNodeMeshes.get(r.id);
+      if (mesh) {
+        const innerR = 30;
+        const sinT = Math.sin(theta);
+        mesh.position.set(
+          innerR * sinT * Math.cos(phi),
+          innerR * Math.cos(theta),
+          innerR * sinT * Math.sin(phi)
+        );
+      }
+      const rw = subtreeW.get(r.id) || 1;
+      const cone = Math.PI * (rw / totalW) * 0.9;
+      // Position children outward from this root's direction
+      const kids = (children.get(r.id) || []).filter(c => nodeSet.has(c));
+      if (kids.length > 0) {
+        const rTotalW = subtreeW.get(r.id) || 1;
+        const goldenA2 = Math.PI * (3 - Math.sqrt(5));
+        for (let j = 0; j < kids.length; j++) {
+          const cid = kids[j];
+          const cw = subtreeW.get(cid) || 1;
+          const childCone = cone * (cw / rTotalW);
+          const spreadR = Math.min(cone, 0.3 + kids.length * 0.05);
+          const offAngle = goldenA2 * j;
+          const cTheta = theta + spreadR * Math.cos(offAngle);
+          const cPhi = phi + (spreadR * Math.sin(offAngle)) / Math.max(Math.sin(theta), 0.3);
+          positionNode(cid, 1, cTheta, cPhi, childCone);
+        }
+      }
     }
   }
 }
@@ -4088,8 +4168,8 @@ function _storeBasePositions() {
 }
 
 let _3dTime = 0;
-const BREATHING_INTENSITY = 0.06;  // how much nodes float
-const BREATHING_SPEED = 0.4;       // how fast they drift
+const BREATHING_INTENSITY = 3;     // max displacement in world units
+const BREATHING_SPEED = 0.3;       // how fast they drift
 
 function animate3D() {
   if (!is3D) return;
@@ -4123,14 +4203,11 @@ function animate3D() {
       const ny = _fractalNoise(t + idx * 0.23, 2, 99) * BREATHING_INTENSITY;
       const nz = _fractalNoise(t + idx * 0.31, 2, 157) * BREATHING_INTENSITY;
 
-      // Scale breathing by distance from center (further = more float)
-      const dist = base.length() || 1;
-      const scale = 1 + dist * 0.002;
-
+      // Additive offset — gentle fixed-amount float, not scaled by distance
       mesh.position.set(
-        base.x + base.x * nx * scale,
-        base.y + base.y * ny * scale + Math.sin(t + idx * 0.5) * 2,
-        base.z + base.z * nz * scale
+        base.x + nx,
+        base.y + ny + Math.sin(t + idx * 0.5) * 1.5,
+        base.z + nz
       );
       edgesNeedUpdate = true;
     }
