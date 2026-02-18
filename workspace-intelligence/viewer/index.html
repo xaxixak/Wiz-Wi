@@ -1672,69 +1672,61 @@ let _dragNodeMap = null;
 let _dragDescendants = [];
 
 function dragStarted(event, d) {
-  // Build lookup map once per drag
-  _dragNodeMap = new Map();
-  for (const n of simulation.nodes()) _dragNodeMap.set(n.id, n);
-  _dragDescendants = _getDescendants(d.id);
-
-  const isFixed = layoutMode !== 'force';
-  if (isFixed) {
+  if (layoutMode === 'force') {
+    // Force mode: original single-node drag, no children
+    if (!event.active) simulation.alphaTarget(0.3).restart();
     d.fx = d.x;
     d.fy = d.y;
   } else {
-    if (!event.active) simulation.alphaTarget(0.3).restart();
+    // Fixed layouts (tree/radial/sphere): drag with children
+    _dragNodeMap = new Map();
+    for (const n of simulation.nodes()) _dragNodeMap.set(n.id, n);
+    _dragDescendants = _getDescendants(d.id);
     d.fx = d.x;
     d.fy = d.y;
   }
 }
 
 function dragged(event, d) {
-  const dx = event.x - (d.fx ?? d.x);
-  const dy = event.y - (d.fy ?? d.y);
+  if (layoutMode === 'force') {
+    d.fx = event.x;
+    d.fy = event.y;
+  } else {
+    // Fixed layouts: move node + all descendants by same delta
+    const dx = event.x - (d.fx ?? d.x);
+    const dy = event.y - (d.fy ?? d.y);
+    d.fx = event.x;
+    d.fy = event.y;
+    d.x = event.x;
+    d.y = event.y;
 
-  d.fx = event.x;
-  d.fy = event.y;
-
-  // Move all descendants by the same delta
-  for (const cid of _dragDescendants) {
-    const child = _dragNodeMap.get(cid);
-    if (!child) continue;
-    child.x += dx;
-    child.y += dy;
-    if (layoutMode !== 'force') {
+    for (const cid of _dragDescendants) {
+      const child = _dragNodeMap.get(cid);
+      if (!child) continue;
+      child.x += dx;
+      child.y += dy;
       child.fx = child.x;
       child.fy = child.y;
     }
-  }
-
-  if (layoutMode !== 'force') {
-    d.x = event.x;
-    d.y = event.y;
     ticked();
   }
 }
 
 function dragEnded(event, d) {
-  if (layoutMode !== 'force') {
+  if (layoutMode === 'force') {
+    if (!event.active) simulation.alphaTarget(0);
+    d.fx = null;
+    d.fy = null;
+  } else {
     d.fx = event.x;
     d.fy = event.y;
-    // Keep descendants pinned at their new positions
     for (const cid of _dragDescendants) {
       const child = _dragNodeMap.get(cid);
       if (child) { child.fx = child.x; child.fy = child.y; }
     }
-  } else {
-    if (!event.active) simulation.alphaTarget(0);
-    d.fx = null;
-    d.fy = null;
-    // Release descendants too
-    for (const cid of _dragDescendants) {
-      const child = _dragNodeMap.get(cid);
-      if (child) { child.fx = null; child.fy = null; }
-    }
+    _dragNodeMap = null;
+    _dragDescendants = [];
   }
-  _dragNodeMap = null;
-  _dragDescendants = [];
 }
 
 // -----------------------------------------------------------------------
