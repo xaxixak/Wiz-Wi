@@ -4087,10 +4087,16 @@ function apply3DSphereLayout(nodes) {
   const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
   const positioned = new Set();
 
-  // Proportional shell radii: depth/maxDepth * maxR (same as 2D)
+  // Shell radii: higher hierarchy = longer lines, lower = shorter.
+  // Each successive gap shrinks by DECAY so folders spread wide, leaves stay tight.
   const maxDepth = Math.max(...[...nodeDepthMap.values()], 1);
-  const MAX_SHELL_R = 500;
-  function shellR(depth) { return depth === 0 ? 0 : (depth / maxDepth) * MAX_SHELL_R; }
+  const BASE_GAP = 200;   // gap from root to depth 1
+  const DECAY = 0.6;      // each next gap = previous * DECAY
+  const shellRadii = [0];
+  for (let d = 1; d <= maxDepth; d++) {
+    shellRadii[d] = shellRadii[d - 1] + BASE_GAP * Math.pow(DECAY, d - 1);
+  }
+  function shellR(depth) { return shellRadii[Math.min(depth, maxDepth)] || 0; }
 
   // Place node at center of its angular region on its depth shell.
   // Region: [ctMin..ctMax] x [phiMin..phiMax] in area-preserving coords.
@@ -4172,7 +4178,7 @@ function apply3DSphereLayout(nodes) {
   }
 
   // Orphan handling
-  const outerR = MAX_SHELL_R + 80;
+  const outerR = shellRadii[maxDepth] + 80;
   const neighbors = new Map();
   for (const e of rawData.edges) {
     const src = e.source_id || (e.source && e.source.id) || e.source;
