@@ -3194,33 +3194,90 @@ function applyRadialLayout(nodes) {
 // Sphere Layout — concentric rings from center outward by depth (2D projection)
 // -----------------------------------------------------------------------
 function applySphereLayout(nodes) {
+  // Concentric rings by hierarchy depth. Children cluster near parent's angle.
   const container = document.getElementById('graph-container');
   const width = container.clientWidth;
   const height = container.clientHeight;
   const cx = width / 2, cy = height / 2;
 
-  // Group by depth
-  const depthGroups = new Map();
-  for (const n of nodes) {
-    const d = nodeDepthMap.get(n.id) ?? 4;
-    if (!depthGroups.has(d)) depthGroups.set(d, []);
-    depthGroups.get(d).push(n);
+  // Build hierarchy
+  const children = new Map();
+  const parentOf = new Map();
+  for (const e of rawData.edges) {
+    if (HIERARCHY_EDGES.has(e.type)) {
+      const src = e.source_id || (e.source && e.source.id) || e.source;
+      const tgt = e.target_id || (e.target && e.target.id) || e.target;
+      if (!children.has(src)) children.set(src, []);
+      children.get(src).push(tgt);
+      parentOf.set(tgt, src);
+    }
   }
+  for (const e of rawData.edges) {
+    if (OWNERSHIP_EDGES.has(e.type)) {
+      const src = e.source_id || (e.source && e.source.id) || e.source;
+      const tgt = e.target_id || (e.target && e.target.id) || e.target;
+      if (!parentOf.has(tgt)) {
+        if (!children.has(src)) children.set(src, []);
+        children.get(src).push(tgt);
+        parentOf.set(tgt, src);
+      }
+    }
+  }
+  const nodeSet = new Set(nodes.map(n => n.id));
+  const roots = nodes.filter(n => !parentOf.has(n.id) || !nodeSet.has(parentOf.get(n.id)));
 
-  const maxDepth = Math.max(...depthGroups.keys(), 1);
+  // Subtree weights for proportional angle allocation
+  const subtreeW = new Map();
+  function calcW(nid) {
+    const kids = (children.get(nid) || []).filter(c => nodeSet.has(c));
+    if (kids.length === 0) { subtreeW.set(nid, 1); return 1; }
+    let w = 0;
+    for (const c of kids) w += calcW(c);
+    subtreeW.set(nid, w);
+    return w;
+  }
+  roots.forEach(r => calcW(r.id));
+
+  const maxDepth = Math.max(...[...nodeDepthMap.values()], 1);
   const maxRadius = Math.min(width, height) * 0.42;
 
-  for (const [depth, group] of depthGroups) {
+  // Node ID → D3 datum lookup
+  const nodeMap = new Map();
+  for (const n of nodes) nodeMap.set(n.id, n);
+
+  // Place node on its depth ring at given angle, children on next ring nearby
+  function positionNode(nid, depth, angleMin, angleMax) {
+    const n = nodeMap.get(nid);
+    if (!n) return;
+
+    const angle = (angleMin + angleMax) / 2;
     const ringR = (depth / maxDepth) * maxRadius;
-    for (let i = 0; i < group.length; i++) {
-      const angle = (i / group.length) * Math.PI * 2;
-      const x = cx + ringR * Math.cos(angle);
-      const y = cy + ringR * Math.sin(angle);
-      group[i].fx = x;
-      group[i].fy = y;
-      group[i].x = x;
-      group[i].y = y;
+    n.fx = cx + ringR * Math.cos(angle);
+    n.fy = cy + ringR * Math.sin(angle);
+    n.x = n.fx;
+    n.y = n.fy;
+
+    const kids = (children.get(nid) || []).filter(c => nodeSet.has(c));
+    if (kids.length === 0) return;
+
+    const totalW = subtreeW.get(nid) || 1;
+    let curAngle = angleMin;
+    for (const cid of kids) {
+      const cw = subtreeW.get(cid) || 1;
+      const span = ((cw / totalW) * (angleMax - angleMin));
+      positionNode(cid, depth + 1, curAngle, curAngle + span);
+      curAngle += span;
     }
+  }
+
+  // Roots share the full circle
+  const totalW = roots.reduce((s, r) => s + (subtreeW.get(r.id) || 1), 0);
+  let curAngle = 0;
+  for (const r of roots) {
+    const rw = subtreeW.get(r.id) || 1;
+    const span = (rw / totalW) * Math.PI * 2;
+    positionNode(r.id, 0, curAngle, curAngle + span);
+    curAngle += span;
   }
 }
 
@@ -4022,61 +4079,108 @@ function _sphereHash(seed, data) {
 }
 
 function apply3DSphereLayout(nodes) {
-  // Local-sphere layout: each parent is the CENTER of its own sphere.
-  // Children orbit their parent using Fibonacci distribution.
-  // Orbit radius shrinks with depth: macro=big spheres, micro=tight clusters.
+  // Concentric shells: root at center, each depth = larger shell.
+  // Children cluster near parent's angular direction on the next shell.
+  // Same concept as 2D sphere but expanded into 3D (cosTheta + phi).
   const { children, nodeSet, roots, subtreeW } = _build3DHierarchy(nodes);
 
-  // Orbit radius per depth level (distance from parent to children)
-  // Depth 0→1: macro (modules around root), big spread
-  // Depth 1→2: meso (files around module), medium
-  // Depth 2→3+: micro (symbols around file), tight
-  const ORBIT_RADII = [0, 150, 90, 55, 35, 25, 20];
-  const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+  const maxDepth = Math.max(...[...nodeDepthMap.values()], 1);
+  const SHELL_MAX = 400;  // outermost shell radius
   const positioned = new Set();
 
-  // Place node at (cx, cy, cz), then distribute children on a sphere around it
-  function positionNode(nid, depth, cx, cy, cz) {
+  // Place node on its depth shell, subdivide angular region for children
+  // Region: [ctMin..ctMax] x [phiMin..phiMax] in area-preserving coords
+  function positionNode(nid, depth, ctMin, ctMax, phiMin, phiMax) {
     const mesh = threeNodeMeshes.get(nid);
     if (!mesh) return;
-    mesh.position.set(cx, cy, cz);
+
+    const ct = (ctMin + ctMax) / 2;
+    const phi = (phiMin + phiMax) / 2;
+    const r = depth === 0 ? 0 : (depth / maxDepth) * SHELL_MAX;
+
+    const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
+    mesh.position.set(r * sinT * Math.cos(phi), r * ct, r * sinT * Math.sin(phi));
     positioned.add(nid);
 
     const kids = (children.get(nid) || []).filter(c => nodeSet.has(c));
     if (kids.length === 0) return;
 
-    const orbitR = ORBIT_RADII[Math.min(depth + 1, ORBIT_RADII.length - 1)];
+    // Subdivide angular region among children proportionally
+    const totalW = subtreeW.get(nid) || 1;
+    const ctSpan = ctMax - ctMin;
+    const phiSpan = phiMax - phiMin;
 
-    // Fibonacci sphere: even distribution on sphere surface
-    for (let i = 0; i < kids.length; i++) {
-      const cid = kids[i];
-      const ct = 1 - (2 * i + 1) / (kids.length * 2);  // cosTheta: +1 to -1
-      const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
-      const phi = GOLDEN_ANGLE * i;
-
-      const childX = cx + orbitR * sinT * Math.cos(phi);
-      const childY = cy + orbitR * ct;
-      const childZ = cz + orbitR * sinT * Math.sin(phi);
-
-      positionNode(cid, depth + 1, childX, childY, childZ);
+    // Split along wider dimension for even patches
+    if (phiSpan * 0.5 >= ctSpan && kids.length > 1) {
+      let cur = phiMin;
+      for (const cid of kids) {
+        const cw = subtreeW.get(cid) || 1;
+        const span = (cw / totalW) * phiSpan;
+        positionNode(cid, depth + 1, ctMin, ctMax, cur, cur + span);
+        cur += span;
+      }
+    } else if (kids.length > 1) {
+      let cur = ctMin;
+      for (const cid of kids) {
+        const cw = subtreeW.get(cid) || 1;
+        const span = (cw / totalW) * ctSpan;
+        positionNode(cid, depth + 1, cur, cur + span, phiMin, phiMax);
+        cur += span;
+      }
+    } else {
+      positionNode(kids[0], depth + 1, ctMin, ctMax, phiMin, phiMax);
     }
   }
 
-  // Root(s) at center
+  // Root at center, children split the full sphere
   if (roots.length === 1) {
-    positionNode(roots[0].id, 0, 0, 0, 0);
+    const rootMesh = threeNodeMeshes.get(roots[0].id);
+    if (rootMesh) { rootMesh.position.set(0, 0, 0); positioned.add(roots[0].id); }
+
+    const kids = (children.get(roots[0].id) || []).filter(c => nodeSet.has(c));
+    const totalW = subtreeW.get(roots[0].id) || 1;
+    // Split root's children into cosTheta bands then phi within each
+    const nBands = Math.max(2, Math.min(kids.length, Math.round(Math.sqrt(kids.length * 1.5))));
+    const ctStep = 2 / nBands;
+    const bands = Array.from({length: nBands}, () => ({ kids: [], weight: 0 }));
+    let kidIdx = 0, accW = 0;
+    for (let b = 0; b < nBands; b++) {
+      const target = ((b + 1) / nBands) * totalW;
+      while (kidIdx < kids.length) {
+        const cid = kids[kidIdx];
+        const cw = subtreeW.get(cid) || 1;
+        bands[b].kids.push(cid);
+        bands[b].weight += cw;
+        accW += cw;
+        kidIdx++;
+        if (accW >= target && b < nBands - 1) break;
+      }
+    }
+    for (let b = 0; b < nBands; b++) {
+      if (bands[b].kids.length === 0) continue;
+      const bctMin = -1 + b * ctStep;
+      const bctMax = bctMin + ctStep;
+      let curPhi = 0;
+      for (const cid of bands[b].kids) {
+        const cw = subtreeW.get(cid) || 1;
+        const phiSpan = (cw / bands[b].weight) * Math.PI * 2;
+        positionNode(cid, 1, bctMin, bctMax, curPhi, curPhi + phiSpan);
+        curPhi += phiSpan;
+      }
+    }
   } else {
-    // Multiple roots: small Fibonacci sphere
-    for (let i = 0; i < roots.length; i++) {
-      const ct = 1 - (2 * i + 1) / (roots.length * 2);
-      const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
-      const phi = GOLDEN_ANGLE * i;
-      const r = 40;
-      positionNode(roots[i].id, 0, r * sinT * Math.cos(phi), r * ct, r * sinT * Math.sin(phi));
+    const totalW = roots.reduce((s, r) => s + (subtreeW.get(r.id) || 1), 0);
+    let curPhi = 0;
+    for (const r of roots) {
+      const rw = subtreeW.get(r.id) || 1;
+      const phiSpan = (rw / totalW) * Math.PI * 2;
+      positionNode(r.id, 0, -1, 1, curPhi, curPhi + phiSpan);
+      curPhi += phiSpan;
     }
   }
 
-  // Orphan handling: place near connected neighbor or on outer sphere
+  // Orphan handling
+  const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
   const neighbors = new Map();
   for (const e of rawData.edges) {
     const src = e.source_id || (e.source && e.source.id) || e.source;
@@ -4086,37 +4190,26 @@ function apply3DSphereLayout(nodes) {
     neighbors.get(src).push(tgt);
     neighbors.get(tgt).push(src);
   }
-
   let orphanIdx = 0;
   for (const d of nodes) {
     if (positioned.has(d.id)) continue;
     const mesh = threeNodeMeshes.get(d.id);
     if (!mesh) continue;
-
     const nbrs = neighbors.get(d.id) || [];
     let nearMesh = null;
     for (const nid of nbrs) {
-      if (positioned.has(nid) && threeNodeMeshes.has(nid)) {
-        nearMesh = threeNodeMeshes.get(nid);
-        break;
-      }
+      if (positioned.has(nid) && threeNodeMeshes.has(nid)) { nearMesh = threeNodeMeshes.get(nid); break; }
     }
-
     if (nearMesh) {
       const phi = GOLDEN_ANGLE * orphanIdx;
       const ct = 1 - (2 * orphanIdx + 1) / 20;
       const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
-      mesh.position.set(
-        nearMesh.position.x + 25 * sinT * Math.cos(phi),
-        nearMesh.position.y + 25 * ct,
-        nearMesh.position.z + 25 * sinT * Math.sin(phi)
-      );
+      mesh.position.set(nearMesh.position.x + 25 * sinT * Math.cos(phi), nearMesh.position.y + 25 * ct, nearMesh.position.z + 25 * sinT * Math.sin(phi));
     } else {
       const phi = GOLDEN_ANGLE * orphanIdx;
-      const ct = 1 - (2 * orphanIdx + 1) / (nodes.length);
+      const ct = 1 - (2 * orphanIdx + 1) / nodes.length;
       const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
-      const outerR = 300;
-      mesh.position.set(outerR * sinT * Math.cos(phi), outerR * ct, outerR * sinT * Math.sin(phi));
+      mesh.position.set(SHELL_MAX * sinT * Math.cos(phi), SHELL_MAX * ct, SHELL_MAX * sinT * Math.sin(phi));
     }
     positioned.add(d.id);
     orphanIdx++;
