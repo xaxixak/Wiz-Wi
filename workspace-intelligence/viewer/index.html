@@ -3986,16 +3986,15 @@ function apply3DSphereLayout(nodes) {
   const { children, nodeSet, roots, subtreeW } = _build3DHierarchy(nodes);
 
   const SHELL_SPACING = 80;  // radius increase per depth level
+  const positioned = new Set();
 
   // Place node at center of its spherical patch, subdivide patch for children
-  // Patch: [ctMin..ctMax] x [phiMin..phiMax] in area-preserving coords
-  // cosTheta ∈ [-1, 1] maps to pole-to-pole, phi ∈ [0, 2π] wraps around
   function positionNode(nid, depth, ctMin, ctMax, phiMin, phiMax) {
     const mesh = threeNodeMeshes.get(nid);
     if (!mesh) return;
 
-    const ct = (ctMin + ctMax) / 2;       // cosTheta center
-    const phi = (phiMin + phiMax) / 2;    // phi center
+    const ct = (ctMin + ctMax) / 2;
+    const phi = (phiMin + phiMax) / 2;
     const r = depth === 0 ? 0 : SHELL_SPACING * depth;
 
     const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
@@ -4004,6 +4003,7 @@ function apply3DSphereLayout(nodes) {
       r * ct,
       r * sinT * Math.sin(phi)
     );
+    positioned.add(nid);
 
     const kids = (children.get(nid) || []).filter(c => nodeSet.has(c));
     if (kids.length === 0) return;
@@ -4012,9 +4012,8 @@ function apply3DSphereLayout(nodes) {
     const ctSpan = ctMax - ctMin;
     const phiSpan = phiMax - phiMin;
 
-    // Subdivide along the wider dimension for roughly square patches
+    // Subdivide: alternate phi vs cosTheta based on which is wider
     if (phiSpan * 0.5 >= ctSpan && kids.length > 1) {
-      // Split along phi
       let cur = phiMin;
       for (const cid of kids) {
         const cw = subtreeW.get(cid) || 1;
@@ -4023,7 +4022,6 @@ function apply3DSphereLayout(nodes) {
         cur += span;
       }
     } else if (kids.length > 1) {
-      // Split along cosTheta
       let cur = ctMin;
       for (const cid of kids) {
         const cw = subtreeW.get(cid) || 1;
@@ -4032,29 +4030,63 @@ function apply3DSphereLayout(nodes) {
         cur += span;
       }
     } else {
-      // Single child: inherit parent's patch
       positionNode(kids[0], depth + 1, ctMin, ctMax, phiMin, phiMax);
     }
   }
 
-  if (roots.length === 1) {
-    // Root at center, children get the full sphere
-    const rootMesh = threeNodeMeshes.get(roots[0].id);
-    if (rootMesh) rootMesh.position.set(0, 0, 0);
+  // --- Distribute root children into bands FIRST for full sphere coverage ---
+  function distributeFromRoot(rootId) {
+    const rootMesh = threeNodeMeshes.get(rootId);
+    if (rootMesh) { rootMesh.position.set(0, 0, 0); positioned.add(rootId); }
 
-    const kids = (children.get(roots[0].id) || []).filter(c => nodeSet.has(c));
-    const totalW = subtreeW.get(roots[0].id) || 1;
+    const kids = (children.get(rootId) || []).filter(c => nodeSet.has(c));
+    if (kids.length === 0) return;
+    const totalW = subtreeW.get(rootId) || 1;
 
-    // Distribute root's children across full sphere [ct: -1..1, phi: 0..2π]
-    let curPhi = 0;
-    for (const cid of kids) {
-      const cw = subtreeW.get(cid) || 1;
-      const phiSpan = (cw / totalW) * Math.PI * 2;
-      positionNode(cid, 1, -1, 1, curPhi, curPhi + phiSpan);
-      curPhi += phiSpan;
+    // Split into cosTheta bands first, then phi within each band
+    // This covers top + bottom hemispheres from the start
+    const nBands = Math.max(2, Math.min(kids.length, Math.round(Math.sqrt(kids.length * 1.5))));
+    const ctStep = 2 / nBands;
+
+    // Distribute children to bands by weight
+    const bands = [];
+    for (let b = 0; b < nBands; b++) bands.push({ kids: [], weight: 0 });
+
+    let kidIdx = 0, accW = 0;
+    for (let b = 0; b < nBands; b++) {
+      const bandTarget = ((b + 1) / nBands) * totalW;
+      while (kidIdx < kids.length) {
+        const cid = kids[kidIdx];
+        const cw = subtreeW.get(cid) || 1;
+        bands[b].kids.push(cid);
+        bands[b].weight += cw;
+        accW += cw;
+        kidIdx++;
+        if (accW >= bandTarget && b < nBands - 1) break;
+      }
     }
+
+    // Position each band's children
+    for (let b = 0; b < nBands; b++) {
+      const band = bands[b];
+      if (band.kids.length === 0) continue;
+      const ctMin = -1 + b * ctStep;
+      const ctMax = ctMin + ctStep;
+
+      let curPhi = 0;
+      for (const cid of band.kids) {
+        const cw = subtreeW.get(cid) || 1;
+        const phiSpan = (cw / band.weight) * Math.PI * 2;
+        positionNode(cid, 1, ctMin, ctMax, curPhi, curPhi + phiSpan);
+        curPhi += phiSpan;
+      }
+    }
+  }
+
+  if (roots.length === 1) {
+    distributeFromRoot(roots[0].id);
   } else {
-    // Multiple roots: each gets a phi wedge of the full sphere
+    // Multiple roots: each gets a phi wedge, band distribution within
     const totalW = roots.reduce((s, r) => s + (subtreeW.get(r.id) || 1), 0);
     let curPhi = 0;
     for (const r of roots) {
@@ -4063,6 +4095,55 @@ function apply3DSphereLayout(nodes) {
       positionNode(r.id, 0, -1, 1, curPhi, curPhi + phiSpan);
       curPhi += phiSpan;
     }
+  }
+
+  // --- Orphan handling: nodes not in hierarchy get placed on outer shell ---
+  const neighbors = new Map();
+  for (const e of rawData.edges) {
+    const src = e.source_id || (e.source && e.source.id) || e.source;
+    const tgt = e.target_id || (e.target && e.target.id) || e.target;
+    if (!neighbors.has(src)) neighbors.set(src, []);
+    if (!neighbors.has(tgt)) neighbors.set(tgt, []);
+    neighbors.get(src).push(tgt);
+    neighbors.get(tgt).push(src);
+  }
+
+  let orphanIdx = 0;
+  const outerR = SHELL_SPACING * 6;  // outer shell for orphans
+  for (const d of nodes) {
+    if (positioned.has(d.id)) continue;
+    const mesh = threeNodeMeshes.get(d.id);
+    if (!mesh) continue;
+
+    // Place near a positioned neighbor if possible
+    const nbrs = neighbors.get(d.id) || [];
+    let nearMesh = null;
+    for (const nid of nbrs) {
+      if (positioned.has(nid) && threeNodeMeshes.has(nid)) {
+        nearMesh = threeNodeMeshes.get(nid);
+        break;
+      }
+    }
+
+    if (nearMesh) {
+      const dir = nearMesh.position.clone();
+      const dist = dir.length() || 1;
+      dir.normalize();
+      const angle = orphanIdx * 2.39996;
+      mesh.position.set(
+        nearMesh.position.x + 20 * Math.cos(angle),
+        nearMesh.position.y + 20 * Math.sin(angle),
+        nearMesh.position.z + 15
+      );
+    } else {
+      // No neighbor — place on outer shell using golden angle
+      const phi = orphanIdx * 2.39996;
+      const ct = 1 - (2 * orphanIdx + 1) / (nodes.length);
+      const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
+      mesh.position.set(outerR * sinT * Math.cos(phi), outerR * ct, outerR * sinT * Math.sin(phi));
+    }
+    positioned.add(d.id);
+    orphanIdx++;
   }
 }
 
