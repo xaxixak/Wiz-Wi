@@ -1015,6 +1015,7 @@ const EDGE_GROUP_COLORS = {
 // -----------------------------------------------------------------------
 let rawData = { nodes: [], edges: [] };
 let nodeDepthMap = new Map();  // containment depth per node (0=root, deeper=smaller)
+let hierarchyChildren = new Map();  // parent → [child ids] for drag-with-children
 let currentGraphPath = null;
 let simulation = null;
 let svg, g, linkG, nodeG;
@@ -1352,7 +1353,7 @@ function getFilteredData() {
 // -----------------------------------------------------------------------
 function computeNodeDepths() {
   nodeDepthMap = new Map();
-  const children = new Map();
+  hierarchyChildren = new Map();
   const hasParent = new Set();
 
   // Structural containment first
@@ -1360,8 +1361,8 @@ function computeNodeDepths() {
     if (!HIERARCHY_EDGES.has(e.type)) continue;
     const src = e.source_id || (e.source && e.source.id) || e.source;
     const tgt = e.target_id || (e.target && e.target.id) || e.target;
-    if (!children.has(src)) children.set(src, []);
-    children.get(src).push(tgt);
+    if (!hierarchyChildren.has(src)) hierarchyChildren.set(src, []);
+    hierarchyChildren.get(src).push(tgt);
     hasParent.add(tgt);
   }
 
@@ -1371,21 +1372,20 @@ function computeNodeDepths() {
     const src = e.source_id || (e.source && e.source.id) || e.source;
     const tgt = e.target_id || (e.target && e.target.id) || e.target;
     if (!hasParent.has(tgt)) {
-      if (!children.has(src)) children.set(src, []);
-      children.get(src).push(tgt);
+      if (!hierarchyChildren.has(src)) hierarchyChildren.set(src, []);
+      hierarchyChildren.get(src).push(tgt);
       hasParent.add(tgt);
     }
   }
 
   // Roots = nodes that have children but no parent
   const roots = [];
-  for (const [id] of children) {
+  for (const [id] of hierarchyChildren) {
     if (!hasParent.has(id)) roots.push(id);
   }
-  // Also include any nodes not in containment tree (orphans get max depth)
   function assignDepth(nid, d) {
     nodeDepthMap.set(nid, d);
-    for (const cid of (children.get(nid) || [])) assignDepth(cid, d + 1);
+    for (const cid of (hierarchyChildren.get(nid) || [])) assignDepth(cid, d + 1);
   }
   roots.forEach(r => assignDepth(r, 0));
 
@@ -1654,7 +1654,29 @@ function ticked() {
 // -----------------------------------------------------------------------
 // Drag handlers
 // -----------------------------------------------------------------------
+// Collect all descendants of a node via hierarchy
+function _getDescendants(nodeId) {
+  const desc = [];
+  const stack = [...(hierarchyChildren.get(nodeId) || [])];
+  while (stack.length) {
+    const cid = stack.pop();
+    desc.push(cid);
+    const kids = hierarchyChildren.get(cid);
+    if (kids) for (const k of kids) stack.push(k);
+  }
+  return desc;
+}
+
+// Build a map of node id → D3 datum for quick lookup during drag
+let _dragNodeMap = null;
+let _dragDescendants = [];
+
 function dragStarted(event, d) {
+  // Build lookup map once per drag
+  _dragNodeMap = new Map();
+  for (const n of simulation.nodes()) _dragNodeMap.set(n.id, n);
+  _dragDescendants = _getDescendants(d.id);
+
   const isFixed = layoutMode !== 'force';
   if (isFixed) {
     d.fx = d.x;
@@ -1667,8 +1689,24 @@ function dragStarted(event, d) {
 }
 
 function dragged(event, d) {
+  const dx = event.x - (d.fx ?? d.x);
+  const dy = event.y - (d.fy ?? d.y);
+
   d.fx = event.x;
   d.fy = event.y;
+
+  // Move all descendants by the same delta
+  for (const cid of _dragDescendants) {
+    const child = _dragNodeMap.get(cid);
+    if (!child) continue;
+    child.x += dx;
+    child.y += dy;
+    if (layoutMode !== 'force') {
+      child.fx = child.x;
+      child.fy = child.y;
+    }
+  }
+
   if (layoutMode !== 'force') {
     d.x = event.x;
     d.y = event.y;
@@ -1680,11 +1718,23 @@ function dragEnded(event, d) {
   if (layoutMode !== 'force') {
     d.fx = event.x;
     d.fy = event.y;
+    // Keep descendants pinned at their new positions
+    for (const cid of _dragDescendants) {
+      const child = _dragNodeMap.get(cid);
+      if (child) { child.fx = child.x; child.fy = child.y; }
+    }
   } else {
     if (!event.active) simulation.alphaTarget(0);
     d.fx = null;
     d.fy = null;
+    // Release descendants too
+    for (const cid of _dragDescendants) {
+      const child = _dragNodeMap.get(cid);
+      if (child) { child.fx = null; child.fy = null; }
+    }
   }
+  _dragNodeMap = null;
+  _dragDescendants = [];
 }
 
 // -----------------------------------------------------------------------
