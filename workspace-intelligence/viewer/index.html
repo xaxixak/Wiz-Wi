@@ -4079,36 +4079,33 @@ function _sphereHash(seed, data) {
 }
 
 function apply3DSphereLayout(nodes) {
-  // Hybrid sphere: like a real tree.
-  // Macro (depth 0-1): branches spread outward on concentric shells
-  // Meso (depth 2): circular ring around parent
-  // Micro (depth 3+): full sphere (720°) around parent — flowers/fruit
+  // Like a real tree: branches keep spreading OUTWARD on bigger shells.
+  // Only the very tips (leaves) bloom as small spheres around their parent.
+  // Every depth level = a bigger concentric shell. Children cluster near
+  // their parent's angular position on the next shell out.
   const { children, nodeSet, roots, subtreeW } = _build3DHierarchy(nodes);
 
-  const MACRO_DEPTH = 1;      // depth 0-1 = shell-based branching
-  const SHELL_RADII = [0, 200, 350];  // shell radius per macro depth (wider spread)
-  const MESO_BASE_R = 80;     // base ring radius for meso (scales with child count)
-  const MICRO_ORBIT = [0, 0, 0, 55, 40, 30, 22];  // local sphere radius per depth
   const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
   const positioned = new Set();
 
-  // Helper: build perpendicular basis for a ring around direction `dir`
-  function _perpBasis(dir) {
-    const up = Math.abs(dir.y) < 0.9
-      ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
-    const u = new THREE.Vector3().crossVectors(dir, up).normalize();
-    const v = new THREE.Vector3().crossVectors(dir, u).normalize();
-    return { u, v };
-  }
+  // Dynamic shell radii: every depth gets its own shell
+  const maxDepth = Math.max(...[...nodeDepthMap.values()], 1);
+  const SHELL_BASE = 150;   // first shell radius
+  const SHELL_STEP = 130;   // each depth adds this much
+  function shellR(depth) { return depth === 0 ? 0 : SHELL_BASE + (depth - 1) * SHELL_STEP; }
 
-  // Macro: place on shell, subdivide angular region for children
-  function positionMacro(nid, depth, ctMin, ctMax, phiMin, phiMax) {
+  // Leaf-bloom radius: small Fibonacci sphere around parent for leaf clusters
+  const BLOOM_R = 40;
+
+  // Place node on its depth shell, subdivide angular region for children.
+  // Region: [ctMin..ctMax] x [phiMin..phiMax] in area-preserving coords.
+  function positionOnShell(nid, depth, ctMin, ctMax, phiMin, phiMax) {
     const mesh = threeNodeMeshes.get(nid);
     if (!mesh) return;
 
     const ct = (ctMin + ctMax) / 2;
     const phi = (phiMin + phiMax) / 2;
-    const r = SHELL_RADII[Math.min(depth, SHELL_RADII.length - 1)];
+    const r = shellR(depth);
 
     const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
     mesh.position.set(r * sinT * Math.cos(phi), r * ct, r * sinT * Math.sin(phi));
@@ -4117,118 +4114,65 @@ function apply3DSphereLayout(nodes) {
     const kids = (children.get(nid) || []).filter(c => nodeSet.has(c));
     if (kids.length === 0) return;
 
-    if (depth < MACRO_DEPTH) {
-      // Still in macro range: subdivide angular region
-      const totalW = subtreeW.get(nid) || 1;
-      const ctSpan = ctMax - ctMin;
-      const phiSpan = phiMax - phiMin;
+    // Check if all kids are leaves (no grandchildren) — if so, bloom as sphere
+    const allLeaves = kids.every(cid => {
+      const gk = (children.get(cid) || []).filter(c => nodeSet.has(c));
+      return gk.length === 0;
+    });
 
-      if (phiSpan * 0.5 >= ctSpan && kids.length > 1) {
-        let cur = phiMin;
-        for (const cid of kids) {
-          const cw = subtreeW.get(cid) || 1;
-          const span = (cw / totalW) * phiSpan;
-          positionMacro(cid, depth + 1, ctMin, ctMax, cur, cur + span);
-          cur += span;
-        }
-      } else if (kids.length > 1) {
-        let cur = ctMin;
-        for (const cid of kids) {
-          const cw = subtreeW.get(cid) || 1;
-          const span = (cw / totalW) * ctSpan;
-          positionMacro(cid, depth + 1, cur, cur + span, phiMin, phiMax);
-          cur += span;
-        }
-      } else {
-        positionMacro(kids[0], depth + 1, ctMin, ctMax, phiMin, phiMax);
+    if (allLeaves && kids.length <= 12) {
+      // Leaf cluster: Fibonacci sphere bloom around this node
+      const px = mesh.position.x, py = mesh.position.y, pz = mesh.position.z;
+      const bloomR = BLOOM_R + kids.length * 3;
+      for (let i = 0; i < kids.length; i++) {
+        const cid = kids[i];
+        const cm = threeNodeMeshes.get(cid);
+        if (!cm) continue;
+        const bct = 1 - (2 * i + 1) / (kids.length * 2);
+        const bsinT = Math.sqrt(Math.max(0, 1 - bct * bct));
+        const bphi = GOLDEN_ANGLE * i;
+        cm.position.set(px + bloomR * bsinT * Math.cos(bphi), py + bloomR * bct, pz + bloomR * bsinT * Math.sin(bphi));
+        positioned.add(cid);
+      }
+      return;
+    }
+
+    // Non-leaf: children go on next shell, subdivide angular region
+    const totalW = kids.reduce((s, cid) => s + (subtreeW.get(cid) || 1), 0);
+    const ctSpan = ctMax - ctMin;
+    const phiSpan = phiMax - phiMin;
+
+    // Split along whichever angular dimension is wider
+    if (phiSpan * 0.5 >= ctSpan && kids.length > 1) {
+      let cur = phiMin;
+      for (const cid of kids) {
+        const cw = subtreeW.get(cid) || 1;
+        const span = (cw / totalW) * phiSpan;
+        positionOnShell(cid, depth + 1, ctMin, ctMax, cur, cur + span);
+        cur += span;
+      }
+    } else if (kids.length > 1) {
+      let cur = ctMin;
+      for (const cid of kids) {
+        const cw = subtreeW.get(cid) || 1;
+        const span = (cw / totalW) * ctSpan;
+        positionOnShell(cid, depth + 1, cur, cur + span, phiMin, phiMax);
+        cur += span;
       }
     } else {
-      // Transition to meso: children form ring around this node
-      positionMeso(nid, depth, kids);
+      positionOnShell(kids[0], depth + 1, ctMin, ctMax, phiMin, phiMax);
     }
   }
 
-  // Meso: children form a circular ring around parent
-  function positionMeso(parentId, parentDepth, kids) {
-    const parentMesh = threeNodeMeshes.get(parentId);
-    if (!parentMesh) return;
-
-    const px = parentMesh.position.x;
-    const py = parentMesh.position.y;
-    const pz = parentMesh.position.z;
-
-    // Ring perpendicular to direction from center to parent
-    const dir = parentMesh.position.clone();
-    if (dir.length() < 0.01) dir.set(0, 1, 0);
-    dir.normalize();
-    const { u, v } = _perpBasis(dir);
-
-    // Scale ring radius: more kids = wider ring so they don't overlap
-    const ringR = MESO_BASE_R + kids.length * 8;
-
-    for (let i = 0; i < kids.length; i++) {
-      const cid = kids[i];
-      const mesh = threeNodeMeshes.get(cid);
-      if (!mesh) continue;
-
-      const angle = (i / kids.length) * Math.PI * 2;
-      mesh.position.set(
-        px + ringR * (u.x * Math.cos(angle) + v.x * Math.sin(angle)),
-        py + ringR * (u.y * Math.cos(angle) + v.y * Math.sin(angle)),
-        pz + ringR * (u.z * Math.cos(angle) + v.z * Math.sin(angle))
-      );
-      positioned.add(cid);
-
-      // Meso's children → micro (full sphere)
-      const grandkids = (children.get(cid) || []).filter(c => nodeSet.has(c));
-      if (grandkids.length > 0) {
-        positionMicro(cid, parentDepth + 2, grandkids);
-      }
-    }
-  }
-
-  // Micro: full Fibonacci sphere around parent — flowers/fruit
-  function positionMicro(parentId, depth, kids) {
-    const parentMesh = threeNodeMeshes.get(parentId);
-    if (!parentMesh) return;
-
-    const px = parentMesh.position.x;
-    const py = parentMesh.position.y;
-    const pz = parentMesh.position.z;
-    const orbitR = MICRO_ORBIT[Math.min(depth, MICRO_ORBIT.length - 1)] || 15;
-
-    for (let i = 0; i < kids.length; i++) {
-      const cid = kids[i];
-      const mesh = threeNodeMeshes.get(cid);
-      if (!mesh) continue;
-
-      // Fibonacci sphere distribution
-      const ct = 1 - (2 * i + 1) / (kids.length * 2);
-      const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
-      const phi = GOLDEN_ANGLE * i;
-
-      mesh.position.set(
-        px + orbitR * sinT * Math.cos(phi),
-        py + orbitR * ct,
-        pz + orbitR * sinT * Math.sin(phi)
-      );
-      positioned.add(cid);
-
-      // Deeper micro children: even tighter sphere
-      const grandkids = (children.get(cid) || []).filter(c => nodeSet.has(c));
-      if (grandkids.length > 0) {
-        positionMicro(cid, depth + 1, grandkids);
-      }
-    }
-  }
-
-  // Start: root at center, macro children on shell with band distribution
+  // Start: root at center, children get full sphere via band distribution
   if (roots.length === 1) {
     const rootMesh = threeNodeMeshes.get(roots[0].id);
     if (rootMesh) { rootMesh.position.set(0, 0, 0); positioned.add(roots[0].id); }
 
     const kids = (children.get(roots[0].id) || []).filter(c => nodeSet.has(c));
     const totalW = subtreeW.get(roots[0].id) || 1;
+
+    // Distribute root's children into cosTheta bands for full sphere coverage
     const nBands = Math.max(2, Math.min(kids.length, Math.round(Math.sqrt(kids.length * 1.5))));
     const ctStep = 2 / nBands;
     const bands = Array.from({length: nBands}, () => ({ kids: [], weight: 0 }));
@@ -4250,7 +4194,7 @@ function apply3DSphereLayout(nodes) {
       for (const cid of bands[b].kids) {
         const cw = subtreeW.get(cid) || 1;
         const phiSpan = (cw / bands[b].weight) * Math.PI * 2;
-        positionMacro(cid, 1, bctMin, bctMax, curPhi, curPhi + phiSpan);
+        positionOnShell(cid, 1, bctMin, bctMax, curPhi, curPhi + phiSpan);
         curPhi += phiSpan;
       }
     }
@@ -4260,12 +4204,13 @@ function apply3DSphereLayout(nodes) {
     for (const r of roots) {
       const rw = subtreeW.get(r.id) || 1;
       const phiSpan = (rw / totalW) * Math.PI * 2;
-      positionMacro(r.id, 0, -1, 1, curPhi, curPhi + phiSpan);
+      positionOnShell(r.id, 0, -1, 1, curPhi, curPhi + phiSpan);
       curPhi += phiSpan;
     }
   }
 
-  // Orphan handling
+  // Orphan handling: place on outermost shell + offset
+  const outerR = shellR(maxDepth) + 80;
   const neighbors = new Map();
   for (const e of rawData.edges) {
     const src = e.source_id || (e.source && e.source.id) || e.source;
@@ -4289,9 +4234,9 @@ function apply3DSphereLayout(nodes) {
     const ct = 1 - (2 * orphanIdx + 1) / Math.max(20, nodes.length);
     const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
     if (nearMesh) {
-      mesh.position.set(nearMesh.position.x + 40 * sinT * Math.cos(phi), nearMesh.position.y + 40 * ct, nearMesh.position.z + 40 * sinT * Math.sin(phi));
+      mesh.position.set(nearMesh.position.x + 45 * sinT * Math.cos(phi), nearMesh.position.y + 45 * ct, nearMesh.position.z + 45 * sinT * Math.sin(phi));
     } else {
-      mesh.position.set(450 * sinT * Math.cos(phi), 450 * ct, 450 * sinT * Math.sin(phi));
+      mesh.position.set(outerR * sinT * Math.cos(phi), outerR * ct, outerR * sinT * Math.sin(phi));
     }
     positioned.add(d.id);
     orphanIdx++;
