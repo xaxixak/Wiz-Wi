@@ -3632,7 +3632,7 @@ function init3D() {
   // Scene
   threeScene = new THREE.Scene();
   threeScene.background = new THREE.Color(0x000000);
-  threeScene.fog = new THREE.FogExp2(0x000000, 0.0006);
+  // No fog — nodes stay bright at any distance
 
   // Camera
   threeCamera = new THREE.PerspectiveCamera(60, w / h, 1, 8000);
