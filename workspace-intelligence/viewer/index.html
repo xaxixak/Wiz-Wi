@@ -4079,150 +4079,70 @@ function _sphereHash(seed, data) {
 }
 
 function apply3DSphereLayout(nodes) {
-  // Like a real tree: branches keep spreading OUTWARD on bigger shells.
-  // Only the very tips (leaves) bloom as small spheres around their parent.
-  // Every depth level = a bigger concentric shell. Children cluster near
-  // their parent's angular position on the next shell out.
+  // Mirror of 2D sphere logic but on a 3D sphere surface.
+  // Same approach: concentric shells by depth, children subdivide
+  // parent's angular region proportionally. Simple and consistent.
   const { children, nodeSet, roots, subtreeW } = _build3DHierarchy(nodes);
 
   const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
   const positioned = new Set();
 
-  // Dynamic shell radii: every depth gets its own shell
+  // Proportional shell radii — same logic as 2D: depth/maxDepth * maxR
   const maxDepth = Math.max(...[...nodeDepthMap.values()], 1);
-  const SHELL_BASE = 150;   // first shell radius
-  const SHELL_STEP = 130;   // each depth adds this much
-  function shellR(depth) { return depth === 0 ? 0 : SHELL_BASE + (depth - 1) * SHELL_STEP; }
+  const MAX_SHELL_R = 500;
+  function shellR(depth) { return depth === 0 ? 0 : (depth / maxDepth) * MAX_SHELL_R; }
 
-  // Leaf-bloom radius: small Fibonacci sphere around parent for leaf clusters
-  const BLOOM_R = 40;
-
-  // Place node on its depth shell, subdivide angular region for children.
-  // Region: [ctMin..ctMax] x [phiMin..phiMax] in area-preserving coords.
-  function positionOnShell(nid, depth, ctMin, ctMax, phiMin, phiMax) {
+  // Convert a single angle parameter to 3D sphere position.
+  // angle ∈ [angleMin, angleMax] maps to a spiral on the sphere surface
+  // using two angles: theta (elevation via cosTheta) derived from angle,
+  // and phi (azimuth) = angle itself. This mirrors the 2D where angle → (cos,sin).
+  function positionNode(nid, depth, angleMin, angleMax) {
     const mesh = threeNodeMeshes.get(nid);
     if (!mesh) return;
 
-    const ct = (ctMin + ctMax) / 2;
-    const phi = (phiMin + phiMax) / 2;
+    const angle = (angleMin + angleMax) / 2;
     const r = shellR(depth);
 
+    // Map single angle to sphere: use angle for azimuth (phi),
+    // and spread elevation based on angular position in full range.
+    // elevation = maps [0, 2π] → [-π/2, π/2] for half-sphere spread,
+    // but we want full sphere, so use cosTheta from angle's fractional position.
+    const frac = angle / (Math.PI * 2);  // 0..1 position in full circle
+    const ct = 1 - 2 * frac;             // cosTheta: 1 (top) to -1 (bottom)
     const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
+
+    // Use golden angle offset for phi to avoid alignment artifacts
+    const phi = GOLDEN_ANGLE * (frac * 100) + angle;
+
     mesh.position.set(r * sinT * Math.cos(phi), r * ct, r * sinT * Math.sin(phi));
     positioned.add(nid);
 
+    // Recurse to children — same as 2D: subdivide angle range proportionally
     const kids = (children.get(nid) || []).filter(c => nodeSet.has(c));
     if (kids.length === 0) return;
 
-    // Check if all kids are leaves (no grandchildren) — bloom as Fibonacci sphere
-    const allLeaves = kids.every(cid => {
-      const gk = (children.get(cid) || []).filter(c => nodeSet.has(c));
-      return gk.length === 0;
-    });
-
-    if (allLeaves) {
-      // Leaf cluster: Fibonacci sphere bloom around this node (any count)
-      const px = mesh.position.x, py = mesh.position.y, pz = mesh.position.z;
-      const bloomR = BLOOM_R + Math.sqrt(kids.length) * 8;
-      for (let i = 0; i < kids.length; i++) {
-        const cid = kids[i];
-        const cm = threeNodeMeshes.get(cid);
-        if (!cm) continue;
-        const bct = 1 - (2 * i + 1) / (kids.length * 2);
-        const bsinT = Math.sqrt(Math.max(0, 1 - bct * bct));
-        const bphi = GOLDEN_ANGLE * i;
-        cm.position.set(px + bloomR * bsinT * Math.cos(bphi), py + bloomR * bct, pz + bloomR * bsinT * Math.sin(bphi));
-        positioned.add(cid);
-      }
-      return;
-    }
-
-    // Non-leaf: children go on next shell via 2D band subdivision (not 1D fan)
-    const totalW = kids.reduce((s, cid) => s + (subtreeW.get(cid) || 1), 0);
-
-    if (kids.length === 1) {
-      positionOnShell(kids[0], depth + 1, ctMin, ctMax, phiMin, phiMax);
-    } else {
-      // Split into bands (cosTheta rows) then phi within each band — always 2D
-      const nBands = Math.max(2, Math.round(Math.sqrt(kids.length)));
-      const ctSpan = ctMax - ctMin;
-      const ctStep = ctSpan / nBands;
-      const bands = Array.from({length: nBands}, () => ({ kids: [], weight: 0 }));
-      let kidIdx = 0, accW = 0;
-      for (let b = 0; b < nBands; b++) {
-        const target = ((b + 1) / nBands) * totalW;
-        while (kidIdx < kids.length) {
-          const cid = kids[kidIdx];
-          const cw = subtreeW.get(cid) || 1;
-          bands[b].kids.push(cid);
-          bands[b].weight += cw;
-          accW += cw;
-          kidIdx++;
-          if (accW >= target && b < nBands - 1) break;
-        }
-      }
-      for (let b = 0; b < nBands; b++) {
-        if (bands[b].kids.length === 0) continue;
-        const bctMin = ctMin + b * ctStep, bctMax = bctMin + ctStep;
-        let curPhi = phiMin;
-        const phiSpan = phiMax - phiMin;
-        for (const cid of bands[b].kids) {
-          const cw = subtreeW.get(cid) || 1;
-          const span = (cw / bands[b].weight) * phiSpan;
-          positionOnShell(cid, depth + 1, bctMin, bctMax, curPhi, curPhi + span);
-          curPhi += span;
-        }
-      }
+    const totalW = subtreeW.get(nid) || 1;
+    let curAngle = angleMin;
+    for (const cid of kids) {
+      const cw = subtreeW.get(cid) || 1;
+      const span = (cw / totalW) * (angleMax - angleMin);
+      positionNode(cid, depth + 1, curAngle, curAngle + span);
+      curAngle += span;
     }
   }
 
-  // Start: root at center, children get full sphere via band distribution
-  if (roots.length === 1) {
-    const rootMesh = threeNodeMeshes.get(roots[0].id);
-    if (rootMesh) { rootMesh.position.set(0, 0, 0); positioned.add(roots[0].id); }
-
-    const kids = (children.get(roots[0].id) || []).filter(c => nodeSet.has(c));
-    const totalW = subtreeW.get(roots[0].id) || 1;
-
-    // Distribute root's children into cosTheta bands for full sphere coverage
-    const nBands = Math.max(2, Math.min(kids.length, Math.round(Math.sqrt(kids.length * 1.5))));
-    const ctStep = 2 / nBands;
-    const bands = Array.from({length: nBands}, () => ({ kids: [], weight: 0 }));
-    let kidIdx = 0, accW = 0;
-    for (let b = 0; b < nBands; b++) {
-      const target = ((b + 1) / nBands) * totalW;
-      while (kidIdx < kids.length) {
-        bands[b].kids.push(kids[kidIdx]);
-        bands[b].weight += subtreeW.get(kids[kidIdx]) || 1;
-        accW += subtreeW.get(kids[kidIdx]) || 1;
-        kidIdx++;
-        if (accW >= target && b < nBands - 1) break;
-      }
-    }
-    for (let b = 0; b < nBands; b++) {
-      if (bands[b].kids.length === 0) continue;
-      const bctMin = -1 + b * ctStep, bctMax = bctMin + ctStep;
-      let curPhi = 0;
-      for (const cid of bands[b].kids) {
-        const cw = subtreeW.get(cid) || 1;
-        const phiSpan = (cw / bands[b].weight) * Math.PI * 2;
-        positionOnShell(cid, 1, bctMin, bctMax, curPhi, curPhi + phiSpan);
-        curPhi += phiSpan;
-      }
-    }
-  } else {
-    const totalW = roots.reduce((s, r) => s + (subtreeW.get(r.id) || 1), 0);
-    let curPhi = 0;
-    for (const r of roots) {
-      const rw = subtreeW.get(r.id) || 1;
-      const phiSpan = (rw / totalW) * Math.PI * 2;
-      positionOnShell(r.id, 0, -1, 1, curPhi, curPhi + phiSpan);
-      curPhi += phiSpan;
-    }
+  // Roots share the full circle — same as 2D
+  const totalW = roots.reduce((s, r) => s + (subtreeW.get(r.id) || 1), 0);
+  let curAngle = 0;
+  for (const r of roots) {
+    const rw = subtreeW.get(r.id) || 1;
+    const span = (rw / totalW) * Math.PI * 2;
+    positionNode(r.id, 0, curAngle, curAngle + span);
+    curAngle += span;
   }
 
-  // Orphan handling: place on outermost shell + offset
-  const outerR = shellR(maxDepth) + 80;
+  // Orphan handling
+  const outerR = MAX_SHELL_R + 80;
   const neighbors = new Map();
   for (const e of rawData.edges) {
     const src = e.source_id || (e.source && e.source.id) || e.source;
