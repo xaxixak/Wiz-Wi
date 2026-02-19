@@ -7,11 +7,6 @@
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
 <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
-<script src="https://unpkg.com/three@0.147.0/examples/js/postprocessing/EffectComposer.js"></script>
-<script src="https://unpkg.com/three@0.147.0/examples/js/postprocessing/RenderPass.js"></script>
-<script src="https://unpkg.com/three@0.147.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
-<script src="https://unpkg.com/three@0.147.0/examples/js/shaders/CopyShader.js"></script>
-<script src="https://unpkg.com/three@0.147.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
 <script src="//unpkg.com/3d-force-graph"></script>
 <style>
 /* ======================================================================
@@ -1789,7 +1784,17 @@ function updateGraph() {
   }
 
   // Rebuild 3D if active
-  if (is3D && threeScene && threeControls) build3DGraph();
+  if (is3D && threeScene && threeControls) {
+    // For force layout, warm up simulation so nodes have stable positions
+    // before fitting the 3D camera. D3 initializes positions near (0,0),
+    // then forceCenter moves them to viewport center over many ticks.
+    // Without warmup, fit3DCamera fits to (0,0) then nodes move away.
+    if (layoutMode === 'force') {
+      const warmupTicks = nodes.length > 300 ? 80 : 150;
+      for (let i = 0; i < warmupTicks; i++) simulation.tick();
+    }
+    build3DGraph();
+  }
 }
 
 function nodeRadius(d, edgeCount) {
@@ -3945,6 +3950,8 @@ async function switchSource(sourceId) {
     buildTreeView();
     initGraph();
     updateGraph();
+    // After source switch, re-fit 3D camera once simulation fully settles
+    if (is3D) _fitCameraPending = true;
     updateStats();
     checkNodeLimit();
 
@@ -4252,17 +4259,9 @@ function init3D() {
   canvas.addEventListener('dblclick', on3DDblClick);
   canvas.addEventListener('contextmenu', on3DRightClick);
 
-  // Bloom post-processing
-  const renderPass = new THREE.RenderPass(threeScene, threeCamera);
-  const bloomPass = new THREE.UnrealBloomPass(
-    new THREE.Vector2(w, h),
-    0.6,   // strength — subtle glow, not overwhelming
-    0.4,   // radius — spread of the bloom
-    0.85   // threshold — only bright (emissive) parts bloom
-  );
-  threeComposer = new THREE.EffectComposer(threeRenderer);
-  threeComposer.addPass(renderPass);
-  threeComposer.addPass(bloomPass);
+  // No EffectComposer — use direct rendering for reliability.
+  // Nodes use emissive MeshPhongMaterial so they still glow without post-processing.
+  threeComposer = null;
 
   // Handle resize
   window.addEventListener('resize', on3DResize);
@@ -5182,6 +5181,7 @@ function _storeBasePositions() {
 }
 
 let _3dTime = 0;
+let _fitCameraPending = false;  // re-fit camera once simulation settles after source switch
 const BREATHING_INTENSITY = 3;     // max displacement in world units
 const BREATHING_SPEED = 0.3;       // how fast they drift
 
@@ -5207,6 +5207,13 @@ function animate3D() {
       const by = (5 - depth) * 60;
       if (!mesh.userData._basePos) mesh.userData._basePos = new THREE.Vector3();
       mesh.userData._basePos.set(bx, by, bz);
+    }
+
+    // Re-fit camera once simulation has fully settled after a source switch
+    if (_fitCameraPending && simulation.alpha() < 0.05) {
+      _fitCameraPending = false;
+      const { nodes: fittingNodes } = getFilteredData();
+      fit3DCamera(fittingNodes);
     }
   }
 
@@ -5329,7 +5336,15 @@ function toggle3D() {
     if (!threeScene) init3D();
     // Re-size renderer to match container
     on3DResize();
+    // If force layout simulation is still settling, warm up so nodes
+    // have stable positions before we fit the camera.
+    if (layoutMode === 'force' && simulation && simulation.alpha() > 0.05) {
+      const { nodes: _wn } = getFilteredData();
+      const warmup = _wn.length > 300 ? 80 : 150;
+      for (let i = 0; i < warmup; i++) simulation.tick();
+    }
     build3DGraph();
+    _fitCameraPending = true;  // re-fit once simulation fully settles
     animate3D();
   } else {
     // Switch to 2D
@@ -5338,6 +5353,18 @@ function toggle3D() {
     btn.classList.remove('active');
     if (threeAnimId) { cancelAnimationFrame(threeAnimId); threeAnimId = null; }
     document.getElementById('tooltip').style.display = 'none';
+    // Reset Three.js state so next toggle always re-inits cleanly.
+    // This ensures init3D() runs fresh (correct size, clean WebGL state).
+    threeScene = null;
+    threeRenderer = null;
+    threeComposer = null;
+    threeCamera = null;
+    threeControls = null;
+    threeNodeMeshes.clear();
+    threeEdgeLines = [];
+    threeArrowMeshes = [];
+    threeParticles = [];
+    threeDragNode = null;
     // Re-apply current layout in 2D
     if (layoutMode !== 'force') {
       setLayoutMode(layoutMode);
