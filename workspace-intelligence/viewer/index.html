@@ -7,6 +7,11 @@
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
 <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://unpkg.com/three@0.147.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://unpkg.com/three@0.147.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://unpkg.com/three@0.147.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script src="https://unpkg.com/three@0.147.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://unpkg.com/three@0.147.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
 <script src="//unpkg.com/3d-force-graph"></script>
 <style>
 /* ======================================================================
@@ -1037,6 +1042,7 @@ let threeArrowMeshes = [];        // #3 directional arrows
 let threeParticles = [];           // #5 animated runtime particles
 let threeRaycaster, threeMouse;
 let threeAnimId = null;
+let threeComposer = null;          // bloom post-processing
 let threeCamAnim = null;           // #1 camera fly-to animation state
 let threeHighlightNodes = new Set();  // #2 neighbor highlight
 let threeHighlightLinks = new Set();  // #2 neighbor highlight
@@ -1581,6 +1587,23 @@ function updateGraph() {
     .style('pointer-events', 'none')
     .attr('opacity', 0);
 
+  // Glyph: link count badge (top-right of node)
+  const glyphG = nodeEnter.append('g').attr('class', 'node-glyph');
+  glyphG.append('circle')
+    .attr('class', 'glyph-bg')
+    .attr('r', 6)
+    .attr('fill', '#1a1a2e')
+    .attr('stroke', '#888')
+    .attr('stroke-width', 0.5);
+  glyphG.append('text')
+    .attr('class', 'glyph-text')
+    .attr('text-anchor', 'middle')
+    .attr('dominant-baseline', 'central')
+    .style('font-size', '8px')
+    .style('font-weight', '700')
+    .style('fill', '#fff')
+    .style('pointer-events', 'none');
+
   nodeEnter.append('text')
     .attr('class', 'node-label')
     .attr('dy', d => {
@@ -1678,6 +1701,32 @@ function updateGraph() {
     .text(d => collapsedCounts[d.id] ? `+${collapsedCounts[d.id]}` : '')
     .attr('dy', d => -(nodeRadius(d, edgeCounts[d.id] || 0) + 8))
     .attr('opacity', d => collapsedNodes.has(d.id) ? 1 : 0);
+
+  // Glyphs: link count badge at top-right
+  nodeMerged.select('.node-glyph')
+    .attr('transform', d => {
+      const r = nodeRadius(d, edgeCounts[d.id] || 0);
+      const angle = -Math.PI / 4; // top-right
+      return `translate(${r * Math.cos(angle)},${r * Math.sin(angle)})`;
+    })
+    .attr('opacity', d => {
+      const ec = edgeCounts[d.id] || 0;
+      return ec >= 2 ? 1 : 0; // only show if 2+ connections
+    });
+  nodeMerged.select('.glyph-bg')
+    .attr('fill', d => {
+      if (d.is_stale) return '#e74c3c';
+      const ec = edgeCounts[d.id] || 0;
+      if (ec >= 8) return '#f39c12';  // gold = hub
+      if (ec >= 4) return '#3498db';  // blue = well-connected
+      return '#1a1a2e';               // dark = normal
+    })
+    .attr('stroke', d => d.is_stale ? '#e74c3c' : '#555');
+  nodeMerged.select('.glyph-text')
+    .text(d => {
+      const ec = edgeCounts[d.id] || 0;
+      return ec >= 2 ? ec : '';
+    });
 
   // Update selected + focal highlight
   nodeMerged.classed('node-selected', d => d.id === selectedNodeId);
@@ -4043,6 +4092,18 @@ function init3D() {
   canvas.addEventListener('dblclick', on3DDblClick);
   canvas.addEventListener('contextmenu', on3DRightClick);
 
+  // Bloom post-processing
+  const renderPass = new THREE.RenderPass(threeScene, threeCamera);
+  const bloomPass = new THREE.UnrealBloomPass(
+    new THREE.Vector2(w, h),
+    0.6,   // strength — subtle glow, not overwhelming
+    0.4,   // radius — spread of the bloom
+    0.85   // threshold — only bright (emissive) parts bloom
+  );
+  threeComposer = new THREE.EffectComposer(threeRenderer);
+  threeComposer.addPass(renderPass);
+  threeComposer.addPass(bloomPass);
+
   // Handle resize
   window.addEventListener('resize', on3DResize);
 }
@@ -4056,6 +4117,7 @@ function on3DResize() {
   threeCamera.aspect = w / h;
   threeCamera.updateProjectionMatrix();
   threeRenderer.setSize(w, h);
+  if (threeComposer) threeComposer.setSize(w, h);
 }
 
 function on3DMouseMove(event) {
@@ -4426,6 +4488,31 @@ function build3DGraph() {
     mesh.userData.nodeId = d.id;
     mesh.userData._baseEmissive = material.emissiveIntensity;
     mesh.userData._baseColor = colorHex;  // #2 for highlight restore
+
+    // Glyph: link count indicator (small sphere + sprite at top-right)
+    if (ec >= 2) {
+      const glyphColor = d.is_stale ? 0xe74c3c : ec >= 8 ? 0xf39c12 : ec >= 4 ? 0x3498db : 0x555555;
+      const glyphGeo = new THREE.SphereGeometry(3, 8, 6);
+      const glyphMat = new THREE.MeshBasicMaterial({ color: glyphColor });
+      const glyphMesh = new THREE.Mesh(glyphGeo, glyphMat);
+      glyphMesh.position.set(r3d * 0.7, r3d * 0.7, 0); // top-right offset
+      mesh.add(glyphMesh);
+      // Sprite label with the count
+      const canvas2 = document.createElement('canvas');
+      canvas2.width = 32; canvas2.height = 32;
+      const ctx2 = canvas2.getContext('2d');
+      ctx2.fillStyle = '#ffffff';
+      ctx2.font = 'bold 22px Arial';
+      ctx2.textAlign = 'center';
+      ctx2.textBaseline = 'middle';
+      ctx2.fillText(String(ec), 16, 16);
+      const spriteTex = new THREE.CanvasTexture(canvas2);
+      const spriteMat = new THREE.SpriteMaterial({ map: spriteTex, transparent: true });
+      const sprite = new THREE.Sprite(spriteMat);
+      sprite.scale.set(6, 6, 1);
+      sprite.position.set(r3d * 0.7, r3d * 0.7, 0);
+      mesh.add(sprite);
+    }
 
     // Collapse indicator: dashed yellow ring around collapsed nodes
     if (collapsedNodes.has(d.id)) {
@@ -5003,7 +5090,12 @@ function animate3D() {
   // #5 Animate runtime particles
   _updateRuntimeParticles();
 
-  threeRenderer.render(threeScene, threeCamera);
+  // Bloom post-processing: composer renders scene + bloom pass
+  if (threeComposer) {
+    threeComposer.render();
+  } else {
+    threeRenderer.render(threeScene, threeCamera);
+  }
 }
 
 // #5 Spawn a glowing particle that travels along an edge (source → target)
