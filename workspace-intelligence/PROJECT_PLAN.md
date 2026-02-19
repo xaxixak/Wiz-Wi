@@ -233,38 +233,65 @@ This solves both the **scale problem** (never load 1000+ nodes) and the **usabil
 
 ## Upcoming Phases
 
-### Phase H: Knowledge Graph Visualization (NEXT)
-*Goal: New modes for knowledge/vector data (Oracle v2, embeddings, concepts)*
+### Phase H: Universal Graph Visualization (NEXT)
+*Goal: Turn WI into a general-purpose graph visualizer — any data with vectors, categories, or timestamps gets new modes automatically*
 *Source: Research from Cambridge Intelligence, iCAVE, arxiv 2412.05289, CorGIE*
 
-**Key insight**: Current modes work for CODE (hierarchy-driven). Knowledge data needs new modes where VECTORS, CONCEPTS, and TIME drive layout.
+**Key insight**: Modes should be **data-property driven**, not source-specific. Any node with vectors gets Semantic mode. Any node with categories gets Cluster mode. Any graph with timestamps gets Temporal mode.
 
-| # | Task | Dependencies | Priority |
-|---|------|-------------|----------|
-| H1 | **Semantic mode** — UMAP/t-SNE projection of vector embeddings | Python: `umap-learn`, ChromaDB vectors | HIGH |
-| H2 | **Concept cluster mode** — nodes grouped into transparent bubbles by tag | Concept data from Oracle v2 | HIGH |
-| H3 | **Temporal mode** — X=time, Y=concept, shows knowledge evolution | Creation timestamps | MEDIUM |
-| H4 | **Lineage mode** — extends/supersedes chains as directed tree | Oracle `extends`/`supersedes` links | MEDIUM |
-| H5 | **Similarity heatmap** — matrix view, rows×cols=docs, color=similarity | ChromaDB pairwise similarity | LOW |
-| H6 | **Dual-view mode** — topology vs semantics side by side | H1 + force layout | LOW |
-| H7 | **Peculiarity metric** — highlight unexpected embedding neighbors | ChromaDB vectors | LOW |
+#### H0: Universal Data Adapter (prerequisite — build first)
 
-**Prerequisites** (must build first):
-1. `server.py` — Add `/api/umap` endpoint (project vectors → 2D/3D coords via UMAP)
-2. `server.py` — Add `/api/oracle` endpoint (wire Oracle v2 as alternative data source)
-3. `viewer/index.html` — Data source switcher (code graph vs knowledge graph)
+| # | Task | What It Enables |
+|---|------|----------------|
+| H0.1 | **Generic graph format spec** — define universal `{nodes, links}` with optional properties: `vectors[]`, `categories[]`, `timestamp`, `parent`, `metadata{}` | All modes work on any data |
+| H0.2 | **Data source plugins** — pluggable adapters: WI code graph, Oracle v2, CSV import, JSON import | Not locked to one source |
+| H0.3 | **`/api/graph-sources` endpoint** — list available sources, load/switch between them | Server-side routing |
+| H0.4 | **Viewer data source switcher** — dropdown: "test-shop (code)" / "Oracle v2 (knowledge)" / "Import..." | User picks data in UI |
+| H0.5 | **Vector embedding pipeline** (optional) — embed code nodes via LLM so code gets Semantic mode too | Code + Knowledge unified |
 
-**Framework — What drives node position?**
+#### H1-H7: Property-Driven Modes
 
-| Mode | Position Driver | Data Type |
-|------|----------------|-----------|
-| Structure | Containment hierarchy | Code |
-| Dependency | Import/call topology | Code |
-| Runtime | Live events (overlay) | Code |
-| **Semantic** | **Vector similarity** | **Knowledge** |
-| **Concept** | **Concept tags** | **Knowledge** |
-| **Temporal** | **Creation time** | **Knowledge** |
-| **Lineage** | **extends/supersedes** | **Knowledge** |
+| # | Mode | Works when node has... | Works for | Priority |
+|---|------|----------------------|-----------|----------|
+| H1 | **Semantic** — UMAP/t-SNE projection, nearby=similar | `vectors[]` | ANY data with embeddings | HIGH |
+| H2 | **Concept cluster** — transparent bubbles by tag, click to expand | `categories[]` or `tags[]` | ANY categorized data | HIGH |
+| H3 | **Temporal** — X=time, Y=concept, evolution over time | `timestamp` | ANY timestamped data | MEDIUM |
+| H4 | **Lineage** — directed tree of parent→child / extends / supersedes | directed `parent`→`child` links | ANY DAG (code hierarchy, Oracle supersede, git history) | MEDIUM |
+| H5 | **Similarity heatmap** — matrix view, color=similarity score | `vectors[]` | ANY embeddings | LOW |
+| H6 | **Dual-view** — topology (links) vs semantics (vectors) side by side | `vectors[]` + explicit links | ANY hybrid data | LOW |
+| H7 | **Peculiarity** — highlight unexpected embedding neighbors | `vectors[]` | ANY embeddings | LOW |
+
+#### H8: Mode Overlay System
+
+| # | Feature | What It Does |
+|---|---------|-------------|
+| H8.1 | **Position = one mode** | e.g. Semantic (UMAP) sets X/Y/Z |
+| H8.2 | **Edges = another mode** | e.g. show Dependency edges on Semantic positions |
+| H8.3 | **Color = another dimension** | e.g. color by staleness on Temporal layout, or by category on Semantic layout |
+
+This means: "show me code functions positioned by semantic similarity, colored by folder, with dependency arrows" — all composable.
+
+#### Server Endpoints Needed
+
+| Endpoint | What | Used By |
+|----------|------|---------|
+| `/api/graph-sources` | List available graph sources | H0.4 viewer switcher |
+| `/api/graph?source=X` | Load graph from any source (unified format) | H0.2 plugins |
+| `/api/umap?source=X` | Project vectors → 2D/3D coords via UMAP | H1 Semantic mode |
+| `/api/similarity?source=X` | Pairwise similarity matrix | H5 Heatmap, H7 Peculiarity |
+| `/api/clusters?source=X&by=categories` | Compute cluster assignments | H2 Concept cluster |
+
+#### Framework — What drives node position?
+
+| Mode | Position Driver | Requires | Works For |
+|------|----------------|----------|-----------|
+| Structure | Containment hierarchy | `CONTAINS` edges | Code |
+| Dependency | Import/call topology | `IMPORTS`/`CALLS` edges | Code |
+| Runtime | Live events (overlay) | SSE events | Code |
+| **Semantic** | **Vector similarity** | **`vectors[]`** | **Any** |
+| **Concept** | **Category tags** | **`categories[]`** | **Any** |
+| **Temporal** | **Creation time** | **`timestamp`** | **Any** |
+| **Lineage** | **Parent→child chains** | **directed links** | **Any** |
 
 ### Phase I: Code Quality & Maintainability
 *Goal: Keep the codebase healthy as it grows*
@@ -308,6 +335,8 @@ This solves both the **scale problem** (never load 1000+ nodes) and the **usabil
 | ADR-011 | 2D↔3D toggle over 3D-only replacement | Keep 2D strengths (SVG text, edge bundling, markers) + add 3D for spatial exploration |
 | ADR-012 | 3d-force-graph as tester mode, not replacement | Library is good for native 3D physics but our hand-rolled 3D has better layout integration + runtime overlay |
 | ADR-013 | "What drives layout?" framework for new modes | Each mode maps one data dimension to node position — prevents mode confusion |
+| ADR-014 | Property-driven modes, not source-specific | Modes activate based on node properties (vectors, categories, timestamps) not data source — makes WI a general-purpose graph visualizer |
+| ADR-015 | Mode overlay system (position + edges + color composable) | Don't lock position/edge/color to same mode — let users mix dimensions for richer exploration |
 
 ---
 
