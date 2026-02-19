@@ -663,8 +663,8 @@ body {
           <option value="force">Force</option>
           <option value="tree">Tree</option>
           <option value="radial">Radial</option>
-          <option value="sphere">Sphere</option>
-          <option value="fg3d">Force Graph 3D</option>
+          <option value="sphere">Bloom</option>
+          <option value="fg3d">Tester</option>
         </select>
         <button class="layer-btn" id="btn-3d-toggle" onclick="toggle3D()" title="Switch between 2D and 3D view" style="font-weight:700;">3D</button>
       </div>
@@ -1052,6 +1052,39 @@ let threeDragStartScreen = { x: 0, y: 0 }; // screen coords at mousedown
 let fg3dInstance = null;
 let threeHoveredNode = null;
 
+// Combo node (collapse/expand) state
+let collapsedNodes = new Set();    // node IDs that are collapsed
+let collapsedCounts = {};          // nodeId → number of hidden descendants
+
+function _getAllDescendants(nodeId) {
+  const ids = new Set();
+  const stack = [nodeId];
+  while (stack.length > 0) {
+    const nid = stack.pop();
+    const kids = hierarchyChildren.get(nid) || [];
+    for (const kid of kids) {
+      if (!ids.has(kid)) {
+        ids.add(kid);
+        stack.push(kid);
+      }
+    }
+  }
+  return ids;
+}
+
+function toggleCollapse(nodeId) {
+  if (collapsedNodes.has(nodeId)) {
+    collapsedNodes.delete(nodeId);
+  } else {
+    // Only collapse nodes that have children
+    const kids = hierarchyChildren.get(nodeId) || [];
+    if (kids.length === 0) return;
+    collapsedNodes.add(nodeId);
+  }
+  updateGraph();
+  if (is3D && threeScene) build3DGraph();
+}
+
 // Focal point state
 let focalNodeId = null;
 let focalDepth = 2;
@@ -1339,8 +1372,20 @@ function initGraph() {
 function getFilteredData() {
   const searchTerm = filters.search;
 
+  // Build set of all node IDs hidden by collapsed ancestors
+  const hiddenByCollapse = new Set();
+  collapsedCounts = {};
+  for (const cid of collapsedNodes) {
+    const descs = _getAllDescendants(cid);
+    collapsedCounts[cid] = descs.size;
+    for (const did of descs) hiddenByCollapse.add(did);
+  }
+
   // Filter nodes
   const filteredNodes = rawData.nodes.filter(n => {
+    // Hidden by collapsed parent
+    if (hiddenByCollapse.has(n.id)) return false;
+
     // Focal mode: only show nodes in focal subgraph
     if (focalNodeSet && !focalNodeSet.has(n.id)) return false;
 
@@ -1485,8 +1530,9 @@ function updateGraph() {
     .append('g')
     .attr('class', 'edge-group');
 
-  edgeEnter.append('line')
-    .attr('class', 'edge-line');
+  edgeEnter.append('path')
+    .attr('class', 'edge-line')
+    .attr('fill', 'none');
 
   edgeEnter.append('text')
     .attr('class', 'edge-label');
@@ -1514,6 +1560,27 @@ function updateGraph() {
   nodeEnter.append('path')
     .attr('class', 'node-shape');
 
+  // Collapse indicator: outer dashed ring (hidden by default)
+  nodeEnter.append('circle')
+    .attr('class', 'collapse-ring')
+    .attr('r', 0)
+    .attr('fill', 'none')
+    .attr('stroke', '#ffdd57')
+    .attr('stroke-width', 2)
+    .attr('stroke-dasharray', '4,3')
+    .attr('opacity', 0);
+
+  // Collapse badge: child count (hidden by default)
+  nodeEnter.append('text')
+    .attr('class', 'collapse-badge')
+    .attr('text-anchor', 'middle')
+    .attr('dominant-baseline', 'central')
+    .style('font-size', '10px')
+    .style('font-weight', '700')
+    .style('fill', '#ffdd57')
+    .style('pointer-events', 'none')
+    .attr('opacity', 0);
+
   nodeEnter.append('text')
     .attr('class', 'node-label')
     .attr('dy', d => {
@@ -1531,6 +1598,13 @@ function updateGraph() {
   nodeEnter.on('click', (event, d) => {
     event.stopPropagation();
     selectNode(d);
+  });
+
+  // Double-click: toggle collapse/expand
+  nodeEnter.on('dblclick', (event, d) => {
+    event.stopPropagation();
+    event.preventDefault();
+    toggleCollapse(d.id);
   });
 
   // Hover tooltip
@@ -1583,11 +1657,27 @@ function updateGraph() {
     });
 
   nodeMerged.select('.node-label')
-    .text(d => truncate(d.name, 18))
+    .text(d => {
+      const cc = collapsedCounts[d.id];
+      return cc ? `${truncate(d.name, 14)} [${cc}]` : truncate(d.name, 18);
+    })
     .attr('dy', d => {
       const r = nodeRadius(d, edgeCounts[d.id] || 0);
       return r + 12;
     });
+
+  // Collapse ring + badge
+  nodeMerged.select('.collapse-ring')
+    .attr('r', d => {
+      if (!collapsedNodes.has(d.id)) return 0;
+      return nodeRadius(d, edgeCounts[d.id] || 0) + 6;
+    })
+    .attr('opacity', d => collapsedNodes.has(d.id) ? 0.8 : 0);
+
+  nodeMerged.select('.collapse-badge')
+    .text(d => collapsedCounts[d.id] ? `+${collapsedCounts[d.id]}` : '')
+    .attr('dy', d => -(nodeRadius(d, edgeCounts[d.id] || 0) + 8))
+    .attr('opacity', d => collapsedNodes.has(d.id) ? 1 : 0);
 
   // Update selected + focal highlight
   nodeMerged.classed('node-selected', d => d.id === selectedNodeId);
@@ -1656,18 +1746,42 @@ function ticked() {
   _tickFrame = requestAnimationFrame(() => {
     _tickFrame = null;
 
-    // Update edge lines
+    // Update edge paths (straight for structural, curved for others)
     linkG.selectAll('.edge-line')
-      .attr('x1', d => d.source.x)
-      .attr('y1', d => d.source.y)
-      .attr('x2', d => d.target.x)
-      .attr('y2', d => d.target.y);
+      .attr('d', d => {
+        const sx = d.source.x, sy = d.source.y;
+        const tx = d.target.x, ty = d.target.y;
+        // Structural edges (CONTAINS, DEFINES): straight line
+        if (d.group === 'structural') {
+          return `M${sx},${sy}L${tx},${ty}`;
+        }
+        // Non-structural: curve outward using quadratic bezier
+        const dx = tx - sx, dy = ty - sy;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        // Perpendicular offset proportional to distance (subtle curve)
+        const curve = dist * 0.15;
+        // Normal vector (perpendicular to edge direction)
+        const nx = -dy / dist, ny = dx / dist;
+        const mx = (sx + tx) / 2 + nx * curve;
+        const my = (sy + ty) / 2 + ny * curve;
+        return `M${sx},${sy}Q${mx},${my},${tx},${ty}`;
+      });
 
     // Update edge labels only when simulation is nearly done (saves CPU)
     if (simulation.alpha() < 0.1) {
       linkG.selectAll('.edge-label')
-        .attr('x', d => (d.source.x + d.target.x) / 2)
-        .attr('y', d => (d.source.y + d.target.y) / 2 - 4);
+        .attr('x', d => {
+          if (d.group === 'structural') return (d.source.x + d.target.x) / 2;
+          const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          return (d.source.x + d.target.x) / 2 + (-dy / dist) * dist * 0.075;
+        })
+        .attr('y', d => {
+          if (d.group === 'structural') return (d.source.y + d.target.y) / 2 - 4;
+          const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          return (d.source.y + d.target.y) / 2 + (dx / dist) * dist * 0.075 - 4;
+        });
     }
 
     // Update nodes
@@ -3233,10 +3347,13 @@ function applyRadialLayout(nodes) {
 }
 
 // -----------------------------------------------------------------------
-// Sphere Layout — concentric rings from center outward by depth (2D projection)
+// Sphere Layout — Fibonacci explosion projected top-down (matches 3D sphere)
 // -----------------------------------------------------------------------
 function applySphereLayout(nodes) {
-  // Concentric rings by hierarchy depth. Children cluster near parent's angle.
+  // EXPLOSION layout matching apply3DSphereLayout: children burst outward from
+  // parent using Fibonacci sphere distribution, projected to 2D as top-down view
+  // (3D X → 2D x, 3D Z → 2D y). This means the 2D sphere looks like viewing
+  // the 3D explosion from above.
   const container = document.getElementById('graph-container');
   const width = container.clientWidth;
   const height = container.clientHeight;
@@ -3268,7 +3385,7 @@ function applySphereLayout(nodes) {
   const nodeSet = new Set(nodes.map(n => n.id));
   const roots = nodes.filter(n => !parentOf.has(n.id) || !nodeSet.has(parentOf.get(n.id)));
 
-  // Subtree weights for proportional angle allocation
+  // Subtree weights
   const subtreeW = new Map();
   function calcW(nid) {
     const kids = (children.get(nid) || []).filter(c => nodeSet.has(c));
@@ -3280,46 +3397,62 @@ function applySphereLayout(nodes) {
   }
   roots.forEach(r => calcW(r.id));
 
-  const maxDepth = Math.max(...[...nodeDepthMap.values()], 1);
-  const maxRadius = Math.min(width, height) * 0.42;
-
-  // Node ID → D3 datum lookup
   const nodeMap = new Map();
   for (const n of nodes) nodeMap.set(n.id, n);
 
-  // Place node on its depth ring at given angle, children on next ring nearby
-  function positionNode(nid, depth, angleMin, angleMax) {
+  const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+  const BASE_ORBIT = Math.min(width, height) * 0.18;
+  const DECAY = 0.6;
+
+  function orbitR(depth) {
+    return BASE_ORBIT * Math.pow(DECAY, Math.max(0, depth - 1));
+  }
+
+  // Place node at top-down projected position, children via Fibonacci sphere
+  function positionNode(nid, depth, px, py, pz) {
     const n = nodeMap.get(nid);
     if (!n) return;
 
-    const angle = (angleMin + angleMax) / 2;
-    const ringR = (depth / maxDepth) * maxRadius;
-    n.fx = cx + ringR * Math.cos(angle);
-    n.fy = cy + ringR * Math.sin(angle);
+    // Top-down projection: 3D X → screen x, 3D Z → screen y
+    n.fx = cx + px;
+    n.fy = cy + pz;
     n.x = n.fx;
     n.y = n.fy;
 
     const kids = (children.get(nid) || []).filter(c => nodeSet.has(c));
     if (kids.length === 0) return;
 
-    const totalW = subtreeW.get(nid) || 1;
-    let curAngle = angleMin;
-    for (const cid of kids) {
-      const cw = subtreeW.get(cid) || 1;
-      const span = ((cw / totalW) * (angleMax - angleMin));
-      positionNode(cid, depth + 1, curAngle, curAngle + span);
-      curAngle += span;
+    // Fibonacci sphere: distribute children on sphere around parent
+    for (let i = 0; i < kids.length; i++) {
+      let r = orbitR(depth + 1);
+      // Subtree weight: nodes with bigger subtrees orbit further from parent
+      const sw = subtreeW.get(kids[i]) || 1;
+      if (sw > 1) r *= (1 + Math.log2(sw) * 0.3);
+
+      const ct = 1 - (2 * i + 1) / kids.length;  // cosTheta: ~1 → ~-1 (full sphere)
+      const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
+      const phi = GOLDEN_ANGLE * i;
+
+      const childX = px + r * sinT * Math.cos(phi);
+      const childY = py + r * ct;
+      const childZ = pz + r * sinT * Math.sin(phi);
+
+      positionNode(kids[i], depth + 1, childX, childY, childZ);
     }
   }
 
-  // Roots share the full circle
-  const totalW = roots.reduce((s, r) => s + (subtreeW.get(r.id) || 1), 0);
-  let curAngle = 0;
-  for (const r of roots) {
-    const rw = subtreeW.get(r.id) || 1;
-    const span = (rw / totalW) * Math.PI * 2;
-    positionNode(r.id, 0, curAngle, curAngle + span);
-    curAngle += span;
+  // Root placement
+  if (roots.length === 1) {
+    positionNode(roots[0].id, 0, 0, 0, 0);
+  } else {
+    // Multiple roots: distribute on a sphere
+    for (let i = 0; i < roots.length; i++) {
+      const ct = 1 - (2 * i + 1) / roots.length;
+      const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
+      const phi = GOLDEN_ANGLE * i;
+      const rr = BASE_ORBIT * 0.5;
+      positionNode(roots[i].id, 0, rr * sinT * Math.cos(phi), rr * ct, rr * sinT * Math.sin(phi));
+    }
   }
 }
 
@@ -3907,6 +4040,7 @@ function init3D() {
   canvas.addEventListener('mousedown', on3DMouseDown);
   canvas.addEventListener('mouseup', on3DMouseUp);
   canvas.addEventListener('click', on3DClick);
+  canvas.addEventListener('dblclick', on3DDblClick);
   canvas.addEventListener('contextmenu', on3DRightClick);
 
   // Handle resize
@@ -4060,6 +4194,17 @@ function on3DClick(event) {
         1200
       );
     }
+  }
+}
+
+// Double-click in 3D: toggle collapse/expand
+function on3DDblClick(event) {
+  threeRaycaster.setFromCamera(threeMouse, threeCamera);
+  const meshes = Array.from(threeNodeMeshes.values());
+  const intersects = threeRaycaster.intersectObjects(meshes);
+  if (intersects.length > 0) {
+    const d = intersects[0].object.userData.nodeData;
+    if (d) toggleCollapse(d.id);
   }
 }
 
@@ -4282,6 +4427,19 @@ function build3DGraph() {
     mesh.userData._baseEmissive = material.emissiveIntensity;
     mesh.userData._baseColor = colorHex;  // #2 for highlight restore
 
+    // Collapse indicator: dashed yellow ring around collapsed nodes
+    if (collapsedNodes.has(d.id)) {
+      const ringGeo = new THREE.RingGeometry(r3d + 3, r3d + 5, 24);
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: 0xffdd57, transparent: true, opacity: 0.8, side: THREE.DoubleSide,
+      });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      mesh.add(ring);  // child of node mesh — moves with it
+      // Scale the node slightly larger to indicate it contains hidden children
+      mesh.scale.setScalar(1.3);
+      material.emissiveIntensity = Math.min(material.emissiveIntensity + 0.2, 0.7);
+    }
+
     threeScene.add(mesh);
     threeNodeMeshes.set(d.id, mesh);
   }
@@ -4344,6 +4502,7 @@ function build3DGraph() {
 
   // Apply current layout mode in 3D
   apply3DLayout(nodes);
+
   _storeBasePositions();
 
   // Update edge positions + arrows
@@ -4624,11 +4783,14 @@ function apply3DSphereLayout(nodes) {
     const kids = (children.get(nid) || []).filter(c => nodeSet.has(c));
     if (kids.length === 0) return;
 
-    const r = orbitR(depth + 1);
-
     // Fibonacci sphere: distribute children evenly on sphere around parent
     for (let i = 0; i < kids.length; i++) {
-      const ct = 1 - (2 * i + 1) / (kids.length * 2);  // cosTheta: 1 to -1
+      let r = orbitR(depth + 1);
+      // Subtree weight: nodes with bigger subtrees orbit further from parent
+      const sw = subtreeW.get(kids[i]) || 1;
+      if (sw > 1) r *= (1 + Math.log2(sw) * 0.3);
+
+      const ct = 1 - (2 * i + 1) / kids.length;  // cosTheta: ~1 → ~-1 (full sphere)
       const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
       const phi = GOLDEN_ANGLE * i;
 
@@ -4646,7 +4808,7 @@ function apply3DSphereLayout(nodes) {
   } else {
     // Multiple roots: distribute on a sphere at center
     for (let i = 0; i < roots.length; i++) {
-      const ct = 1 - (2 * i + 1) / (roots.length * 2);
+      const ct = 1 - (2 * i + 1) / roots.length;
       const sinT = Math.sqrt(Math.max(0, 1 - ct * ct));
       const phi = GOLDEN_ANGLE * i;
       positionNode(roots[i].id, 0, 100 * sinT * Math.cos(phi), 100 * ct, 100 * sinT * Math.sin(phi));
