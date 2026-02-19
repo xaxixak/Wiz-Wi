@@ -71,10 +71,24 @@ class OracleAdapter(BaseAdapter):
         # Transform nodes
         nodes = []
         for n in raw.get("nodes", []):
+            # Build clean display name: prefer label, but fall back to readable id
+            # if label looks like a file path (contains / or \)
+            raw_label = n.get("label", n.get("name", ""))
+            if raw_label and ("/" in raw_label or "\\" in raw_label):
+                # file path label — derive name from doc id instead
+                # e.g. "retro_2026-01-15_session-summary" → "session-summary"
+                # e.g. "learning_2026-01-22_hooks" → "hooks"
+                doc_id = n["id"]
+                parts = doc_id.split("_", 2)  # [type, date?, slug]
+                display_name = parts[-1] if len(parts) >= 2 else doc_id
+            elif raw_label:
+                display_name = raw_label
+            else:
+                display_name = n["id"]
             node = {
                 "id": n["id"],
                 "type": n.get("type", "learning"),
-                "name": n.get("label", n.get("name", n["id"])),
+                "name": display_name,
                 "tier": ORACLE_TYPE_TIERS.get(n.get("type", ""), "meso"),
                 "tags": n.get("concepts", []),
                 "concepts": n.get("concepts", []),

@@ -3933,6 +3933,14 @@ async function switchSource(sourceId) {
       filters.tier.micro = false;
     }
 
+    // Flat graphs (no hierarchy) don't work well with Sphere/Tree/Radial layouts
+    // Auto-switch to Force if needed
+    if (!caps.has_hierarchy && (layoutMode === 'sphere' || layoutMode === 'tree' || layoutMode === 'radial')) {
+      layoutMode = 'force';
+      const ls = document.getElementById('layout-select');
+      if (ls) ls.value = 'force';
+    }
+
     buildFilterUI();
     buildTreeView();
     initGraph();
