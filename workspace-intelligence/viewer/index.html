@@ -700,10 +700,10 @@ body {
           <option value="force">Force</option>
           <option value="tree">Tree</option>
           <option value="radial">Radial</option>
-          <option value="sphere">Bloom</option>
+          <option value="sphere">Sphere</option>
           <option value="semantic">Semantic</option>
           <option value="temporal">Timeline</option>
-          <option value="fg3d">Tester</option>
+          <option value="fg3d">Tester (3D Demo)</option>
         </select>
         <button class="layer-btn" id="btn-3d-toggle" onclick="toggle3D()" title="Switch between 2D and 3D view" style="font-weight:700;">3D</button>
         <button class="layer-btn" id="btn-clusters-toggle" onclick="toggleConceptClusters()" title="Toggle concept cluster bubbles" style="display:none;">Clusters</button>
@@ -1856,13 +1856,37 @@ function updateGraph() {
   if (layoutMode !== 'temporal' && timelineG) timelineG.selectAll('*').remove();
 
   if (layoutMode === 'tree') {
-    applyTreeLayout(nodes);
-    simulation.stop();
-    ticked();
+    // Check if data has hierarchical edges
+    const hasHierarchy = rawData.edges.some(e =>
+      HIERARCHY_EDGES.has(e.type) || OWNERSHIP_EDGES.has(e.type)
+    );
+    if (!hasHierarchy) {
+      console.warn('[Tree Layout] No hierarchical edges found - falling back to Force layout');
+      alert('Tree layout requires hierarchical relationships (CONTAINS, DEFINES edges).\n\nThis data source uses semantic relationships instead.\n\nFalling back to Force layout.');
+      layoutMode = 'force';
+      document.getElementById('layout-mode').value = 'force';
+      simulation.alpha(0.4).restart();
+    } else {
+      applyTreeLayout(nodes);
+      simulation.stop();
+      ticked();
+    }
   } else if (layoutMode === 'radial') {
-    applyRadialLayout(nodes);
-    simulation.stop();
-    ticked();
+    // Check if data has hierarchical edges
+    const hasHierarchy = rawData.edges.some(e =>
+      e.type === 'CONTAINS' || e.type === 'DEFINES'
+    );
+    if (!hasHierarchy) {
+      console.warn('[Radial Layout] No hierarchical edges found - falling back to Force layout');
+      alert('Radial layout requires hierarchical relationships (CONTAINS, DEFINES edges).\n\nThis data source uses semantic relationships instead.\n\nFalling back to Force layout.');
+      layoutMode = 'force';
+      document.getElementById('layout-mode').value = 'force';
+      simulation.alpha(0.4).restart();
+    } else {
+      applyRadialLayout(nodes);
+      simulation.stop();
+      ticked();
+    }
   } else if (layoutMode === 'sphere') {
     applySphereLayout(nodes);
     simulation.stop();
@@ -2445,10 +2469,14 @@ window.addEventListener('resize', () => {
   _resizeTimer = setTimeout(() => {
     // fg3d handles its own resize internally
     if (layoutMode === 'fg3d') return;
+    // In 3D mode, skip SVG resize
+    if (is3D) return;
     const container = document.getElementById('graph-container');
     const width = container.clientWidth;
     const height = container.clientHeight;
-    svg.attr('width', width).attr('height', height);
+    if (svg) {
+      svg.attr('width', width).attr('height', height);
+    }
     simulation.force('center', d3.forceCenter(width / 2, height / 2));
     simulation.alpha(0.15).restart();
   }, 200);
@@ -4143,16 +4171,47 @@ function setLayoutMode(mode) {
     simulation.alpha(0.6).restart();
   } else if (mode === 'tree') {
     if (timelineG) timelineG.selectAll('*').remove();
+    // Validate hierarchical edges exist
+    const hasHierarchy = rawData.edges.some(e =>
+      HIERARCHY_EDGES.has(e.type) || OWNERSHIP_EDGES.has(e.type)
+    );
+    if (!hasHierarchy) {
+      console.warn('[Tree Layout] No hierarchy - falling back to Force');
+      alert('Tree layout requires hierarchical edges.\n\nThis data has semantic relationships instead.\n\nSwitching to Force layout.');
+      setLayoutMode('force');
+      return;
+    }
     applyTreeLayout(nodes);
     simulation.stop();
     ticked();
   } else if (mode === 'radial') {
     if (timelineG) timelineG.selectAll('*').remove();
+    // Validate hierarchical edges exist
+    const hasHierarchy = rawData.edges.some(e =>
+      e.type === 'CONTAINS' || e.type === 'DEFINES'
+    );
+    if (!hasHierarchy) {
+      console.warn('[Radial Layout] No hierarchy - falling back to Force');
+      alert('Radial layout requires hierarchical edges.\n\nThis data has semantic relationships instead.\n\nSwitching to Force layout.');
+      setLayoutMode('force');
+      return;
+    }
     applyRadialLayout(nodes);
     simulation.stop();
     ticked();
   } else if (mode === 'sphere') {
     if (timelineG) timelineG.selectAll('*').remove();
+    // Check if hierarchy exists
+    const hasHierarchy = rawData.edges.some(e =>
+      HIERARCHY_EDGES.has(e.type) || OWNERSHIP_EDGES.has(e.type)
+    );
+    if (!hasHierarchy && !is3D) {
+      // In 2D without hierarchy, fall back to semantic
+      console.warn('[Sphere Layout] No hierarchy in 2D - using Semantic layout');
+      alert('Sphere layout works best with hierarchical data.\n\nFor semantic/category-based graphs, try:\n• Semantic layout (2D clusters)\n• Enable 3D mode for Semantic Sphere\n\nSwitching to Semantic layout.');
+      setLayoutMode('semantic');
+      return;
+    }
     applySphereLayout(nodes);
     simulation.stop();
     ticked();
@@ -5196,29 +5255,87 @@ function build3DGraph() {
 }
 
 function apply3DLayout(nodes) {
-  if (layoutMode === 'force') apply3DForceLayout(nodes);
-  else if (layoutMode === 'tree') apply3DTreeLayout(nodes);
-  else if (layoutMode === 'radial') apply3DRadialLayout(nodes);
-  else if (layoutMode === 'sphere') apply3DSphereLayout(nodes);
-  else if (layoutMode === 'semantic') apply3DSemanticLayout(nodes);
-  else if (layoutMode === 'temporal') apply3DTemporalLayout(nodes);
+  if (layoutMode === 'force') {
+    apply3DForceLayout(nodes);
+  } else if (layoutMode === 'tree') {
+    // Validate hierarchy exists
+    const hasHierarchy = rawData.edges.some(e =>
+      HIERARCHY_EDGES.has(e.type) || OWNERSHIP_EDGES.has(e.type)
+    );
+    if (!hasHierarchy) {
+      console.warn('[3D Tree] No hierarchy - using force layout');
+      apply3DForceLayout(nodes);
+    } else {
+      apply3DTreeLayout(nodes);
+    }
+  } else if (layoutMode === 'radial') {
+    // Validate hierarchy exists
+    const hasHierarchy = rawData.edges.some(e =>
+      e.type === 'CONTAINS' || e.type === 'DEFINES'
+    );
+    if (!hasHierarchy) {
+      console.warn('[3D Radial] No hierarchy - using force layout');
+      apply3DForceLayout(nodes);
+    } else {
+      apply3DRadialLayout(nodes);
+    }
+  } else if (layoutMode === 'sphere') {
+    // Check if we have hierarchy or should use semantic sphere
+    const hierarchyEdges = rawData.edges.filter(e =>
+      HIERARCHY_EDGES.has(e.type) || OWNERSHIP_EDGES.has(e.type)
+    );
+    const hasHierarchy = hierarchyEdges.length > 0;
+
+    console.log(`[3D Sphere] Edges check: total=${rawData.edges.length}, hierarchy=${hierarchyEdges.length}, hasHierarchy=${hasHierarchy}`);
+
+    if (!hasHierarchy) {
+      console.log('[3D Sphere] No hierarchy detected - using SEMANTIC SPHERE with category clusters');
+      apply3DSemanticSphere(nodes);
+    } else {
+      console.log('[3D Sphere] Hierarchy detected - using standard sphere layout');
+      apply3DSphereLayout(nodes);
+    }
+  } else if (layoutMode === 'semantic') {
+    apply3DSemanticLayout(nodes);
+  } else if (layoutMode === 'temporal') {
+    apply3DTemporalLayout(nodes);
+  }
 }
 
 function apply3DForceLayout(nodes) {
-  // Use 2D X/Y positions, spread into Z using a hash of node id for stable distribution
-  for (const d of nodes) {
+  // Distribute nodes on a sphere using Fibonacci spiral for even distribution
+  console.log('[3D Force] Using spherical distribution with', nodes.length, 'nodes');
+
+  const SPHERE_RADIUS = 400;
+  const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+  for (let i = 0; i < nodes.length; i++) {
+    const d = nodes[i];
     const mesh = threeNodeMeshes.get(d.id);
     if (!mesh) continue;
-    const depth = nodeDepthMap.get(d.id) ?? 4;
-    // Hash node id to get stable Z offset
-    let hash = 0;
-    for (let i = 0; i < d.id.length; i++) hash = ((hash << 5) - hash + d.id.charCodeAt(i)) | 0;
-    const zSpread = ((hash % 1000) / 1000) * 300 - 150;
 
-    const x = (d.x || 0) - 400;
-    const z = (d.y || 0) - 300 + zSpread;
-    const y = (5 - depth) * 60;
+    // Fibonacci sphere: evenly distribute points on sphere surface
+    const cosTheta = 1 - (2 * i + 1) / nodes.length;
+    const sinTheta = Math.sqrt(Math.max(0, 1 - cosTheta * cosTheta));
+    const phi = GOLDEN_ANGLE * i;
+
+    const x = SPHERE_RADIUS * sinTheta * Math.cos(phi);
+    const y = SPHERE_RADIUS * cosTheta;
+    const z = SPHERE_RADIUS * sinTheta * Math.sin(phi);
+
     mesh.position.set(x, y, z);
+    // Store as base position so animation loop doesn't overwrite it
+    if (!mesh.userData._basePos) mesh.userData._basePos = new THREE.Vector3();
+    mesh.userData._basePos.set(x, y, z);
+  }
+
+  console.log('[3D Force] Distributed nodes on sphere (radius:', SPHERE_RADIUS, ')');
+
+  // CRITICAL: Stop the 2D simulation so animate3D() doesn't overwrite with flat positions
+  if (simulation) {
+    simulation.alpha(0);  // Explicitly set alpha to 0 FIRST
+    simulation.stop();
+    console.log('[3D Force] Set alpha=0 and stopped 2D simulation to preserve spherical positions');
   }
 }
 
@@ -5534,30 +5651,153 @@ function apply3DSphereLayout(nodes) {
 }
 
 function apply3DSemanticLayout(nodes) {
-  // Semantic layout in 3D: project 2D grid/cluster positions to flat XZ plane
-  // The 2D applySemanticLayout already set x,y positions — just map to 3D
-  for (const d of nodes) {
-    const mesh = threeNodeMeshes.get(d.id);
-    if (!mesh) continue;
-    // Map 2D canvas coords to 3D: x → x (centered), y → z (centered), y=0 (flat)
-    const x = (d.x || 0) - 400;  // center around 0
-    const z = (d.y || 0) - 300;  // center around 0
-    const y = 0;  // flat plane
-    mesh.position.set(x, y, z);
+  // Semantic layout in 3D: use category-clustered sphere
+  console.log('[3D Semantic] Using category-clustered sphere layout');
+  apply3DSemanticSphere(nodes);
+}
+
+function apply3DSemanticSphere(nodes) {
+  console.log('='.repeat(60));
+  console.log('🌐 SEMANTIC SPHERE LAYOUT EXECUTING');
+  console.log(`   Nodes: ${nodes.length}`);
+  console.log('='.repeat(60));
+
+  // Distribute category/concept clusters on a sphere surface
+  // Each category gets a region on the sphere with nodes clustered there
+  const SPHERE_RADIUS = 400;
+  const CLUSTER_RADIUS = 80;
+  const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+  // Group nodes by category (or concept if no category)
+  const clusters = new Map();
+  for (const n of nodes) {
+    const cats = n.categories || [];
+    const cons = n.concepts || n.tags || [];
+    const primary = cats.length > 0 ? cats[0] : (cons.length > 0 ? cons[0] : '__ungrouped__');
+
+    if (!clusters.has(primary)) clusters.set(primary, []);
+    clusters.get(primary).push(n);
+  }
+
+  const clusterNames = Array.from(clusters.keys());
+  const numClusters = clusterNames.length;
+
+  // Distribute cluster centers on sphere using Fibonacci spiral
+  const clusterCenters = new Map();
+  for (let i = 0; i < numClusters; i++) {
+    const cosTheta = 1 - (2 * i + 1) / numClusters;
+    const sinTheta = Math.sqrt(Math.max(0, 1 - cosTheta * cosTheta));
+    const phi = GOLDEN_ANGLE * i;
+
+    const cx = SPHERE_RADIUS * sinTheta * Math.cos(phi);
+    const cy = SPHERE_RADIUS * cosTheta;
+    const cz = SPHERE_RADIUS * sinTheta * Math.sin(phi);
+
+    clusterCenters.set(clusterNames[i], { x: cx, y: cy, z: cz });
+  }
+
+  // Position nodes within their clusters
+  for (const [clusterName, clusterNodes] of clusters) {
+    const center = clusterCenters.get(clusterName);
+    const count = clusterNodes.length;
+
+    // Distribute nodes within cluster using smaller Fibonacci sphere
+    for (let i = 0; i < count; i++) {
+      const n = clusterNodes[i];
+      const mesh = threeNodeMeshes.get(n.id);
+      if (!mesh) continue;
+
+      if (count === 1) {
+        // Single node: place at cluster center
+        mesh.position.set(center.x, center.y, center.z);
+        // Store as base position for floating animation
+        if (!mesh.userData._basePos) mesh.userData._basePos = new THREE.Vector3();
+        mesh.userData._basePos.set(center.x, center.y, center.z);
+      } else {
+        // Multiple nodes: distribute in small sphere around center
+        const ct = 1 - (2 * i + 1) / count;
+        const st = Math.sqrt(Math.max(0, 1 - ct * ct));
+        const p = GOLDEN_ANGLE * i;
+
+        const offset = count > 10 ? CLUSTER_RADIUS : CLUSTER_RADIUS * 0.6;
+        const nx = center.x + offset * st * Math.cos(p);
+        const ny = center.y + offset * ct;
+        const nz = center.z + offset * st * Math.sin(p);
+
+        mesh.position.set(nx, ny, nz);
+        // Store as base position for floating animation
+        if (!mesh.userData._basePos) mesh.userData._basePos = new THREE.Vector3();
+        mesh.userData._basePos.set(nx, ny, nz);
+      }
+    }
+  }
+
+  // Log sample positions for debugging
+  const samplePositions = [];
+  for (let i = 0; i < Math.min(5, nodes.length); i++) {
+    const mesh = threeNodeMeshes.get(nodes[i].id);
+    if (mesh) {
+      samplePositions.push({
+        id: nodes[i].id,
+        pos: `(${mesh.position.x.toFixed(1)}, ${mesh.position.y.toFixed(1)}, ${mesh.position.z.toFixed(1)})`
+      });
+    }
+  }
+
+  console.log(`[3D Semantic Sphere] Distributed ${numClusters} category clusters on sphere`);
+  console.log('Sample positions:', samplePositions);
+  console.log('Category distribution:', Array.from(clusters.entries()).map(([cat, nodes]) => `${cat}: ${nodes.length}`));
+
+  // CRITICAL: Stop the 2D simulation so animate3D() doesn't overwrite with flat positions
+  if (simulation) {
+    simulation.alpha(0);  // Explicitly set alpha to 0 FIRST
+    simulation.stop();
+    console.log('[3D Semantic Sphere] Set alpha=0 and stopped 2D simulation to preserve spherical positions');
   }
 }
 
 function apply3DTemporalLayout(nodes) {
-  // Timeline layout in 3D: project timeline positions to flat XZ plane
-  // applyTemporalLayout already set x (time), y (lane) — just map to 3D
-  for (const d of nodes) {
+  // Timeline layout in 3D: arrange chronologically on a spiral around sphere
+  console.log('[3D Timeline] Using temporal spiral on sphere');
+
+  // Sort nodes by timestamp (oldest to newest)
+  const sortedNodes = [...nodes].sort((a, b) => {
+    const tsA = a.timestamp || '9999';
+    const tsB = b.timestamp || '9999';
+    return tsA.localeCompare(tsB);
+  });
+
+  const SPHERE_RADIUS = 400;
+  const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+  const SPIRAL_TURNS = 3;  // How many times the spiral wraps around
+
+  for (let i = 0; i < sortedNodes.length; i++) {
+    const d = sortedNodes[i];
     const mesh = threeNodeMeshes.get(d.id);
     if (!mesh) continue;
-    // Map 2D timeline coords: x (time axis) → x, y (lane) → z, y=0 (flat)
-    const x = (d.x || 0) - 400;  // center horizontally
-    const z = (d.y || 0) - 300;  // lanes vertically (in 3D, this becomes depth)
-    const y = 0;  // flat plane
+
+    // Position along spiral: older nodes at top (north pole), newer at bottom (south pole)
+    const t = i / Math.max(1, sortedNodes.length - 1);  // 0 to 1
+    const theta = Math.PI * t;  // Top to bottom
+    const phi = SPIRAL_TURNS * 2 * Math.PI * t;  // Spiral rotation
+
+    const x = SPHERE_RADIUS * Math.sin(theta) * Math.cos(phi);
+    const y = SPHERE_RADIUS * Math.cos(theta);  // Top (old) to bottom (new)
+    const z = SPHERE_RADIUS * Math.sin(theta) * Math.sin(phi);
+
     mesh.position.set(x, y, z);
+    // Store as base position for floating animation
+    if (!mesh.userData._basePos) mesh.userData._basePos = new THREE.Vector3();
+    mesh.userData._basePos.set(x, y, z);
+  }
+
+  console.log('[3D Timeline] Arranged', sortedNodes.length, 'nodes on temporal spiral');
+
+  // CRITICAL: Stop the 2D simulation so animate3D() doesn't overwrite with flat positions
+  if (simulation) {
+    simulation.alpha(0);  // Explicitly set alpha to 0 FIRST
+    simulation.stop();
+    console.log('[3D Timeline] Set alpha=0 and stopped 2D simulation to preserve spherical positions');
   }
 }
 
@@ -5660,8 +5900,9 @@ function animate3D() {
   threeControls.update();
   _3dTime += 1 / 60;
 
-  // In force mode, update base positions from simulation
-  if (layoutMode === 'force' && simulation) {
+  // In force mode, update base positions from simulation (only if simulation is running)
+  // If simulation is stopped (alpha = 0), we're using static spherical layout
+  if (layoutMode === 'force' && simulation && simulation.alpha() > 0) {
     const nodes = simulation.nodes();
     for (const d of nodes) {
       const mesh = threeNodeMeshes.get(d.id);
@@ -5835,6 +6076,11 @@ function toggle3D() {
     // Re-apply current layout in 2D
     if (layoutMode !== 'force') {
       setLayoutMode(layoutMode);
+    } else {
+      // For force mode, restart simulation and redraw
+      console.log('[Toggle 2D] Restarting force simulation for 2D mode');
+      simulation.alpha(0.4).restart();
+      ticked();  // Force initial render
     }
   }
 }

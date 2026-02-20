@@ -63,11 +63,44 @@ class OracleAdapter(BaseAdapter):
         if source_id != "oracle-v2":
             raise ValueError(f"Unknown Oracle source: {source_id}")
 
-        # Fetch graph from Oracle v2 API
+        # Fetch graph structure (nodes + edges)
         url = f"{ORACLE_API}/api/graph?mode=hybrid&limit=2500"
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = json.loads(resp.read().decode("utf-8"))
+
+        # Fetch full document metadata (includes concepts, category, etc.)
+        # Oracle's graph endpoint only returns id/type/label, not concepts/category
+        # Oracle /api/list has a server-side limit of 100 per request, so paginate
+        doc_metadata = {}
+        offset = 0
+        page_size = 100
+        max_docs = 3000  # Safety limit to prevent infinite loop
+
+        try:
+            while offset < max_docs:
+                docs_url = f"{ORACLE_API}/api/list?limit={page_size}&offset={offset}"
+                docs_req = urllib.request.Request(docs_url, method="GET")
+                with urllib.request.urlopen(docs_req, timeout=30) as docs_resp:
+                    docs_data = json.loads(docs_resp.read().decode("utf-8"))
+                    results = docs_data.get("results", [])
+                    if not results:
+                        break  # No more results
+
+                    # Add to lookup map
+                    for doc in results:
+                        doc_metadata[doc["id"]] = doc
+
+                    # Check if we got all documents
+                    total = docs_data.get("total", 0)
+                    offset += len(results)
+                    if offset >= total:
+                        break  # Fetched all available documents
+        except Exception as e:
+            # Fallback if list endpoint fails
+            print(f"[Oracle Adapter] WARNING: Failed to fetch document metadata: {e}", flush=True)
+
+        print(f"[Oracle Adapter] Fetched {len(doc_metadata)} document metadata entries", flush=True)
 
         # Transform nodes
         nodes = []
@@ -91,18 +124,28 @@ class OracleAdapter(BaseAdapter):
             date_match = re.search(r'(\d{4}-\d{2}-\d{2})', doc_id)
             timestamp = date_match.group(1) if date_match else None
 
+            # Get full document metadata if available
+            doc_meta = doc_metadata.get(doc_id, {})
+
+            # Extract concepts and category from full document metadata
+            # Note: Oracle uses singular "category" (string), not "categories" (array)
+            concepts = doc_meta.get("concepts", [])
+            category = doc_meta.get("category", "")
+            # Convert singular category string to array for universal schema
+            categories = [category] if category else []
+
             node = {
                 "id": doc_id,
                 "type": n.get("type", "learning"),
                 "name": display_name,
                 "tier": ORACLE_TYPE_TIERS.get(n.get("type", ""), "meso"),
-                "tags": n.get("concepts", []),
-                "concepts": n.get("concepts", []),
-                "categories": n.get("categories", []) if isinstance(n.get("categories"), list) else [],
+                "tags": concepts,
+                "concepts": concepts,
+                "categories": categories,
                 "confidence": 1.0,
                 "is_stale": False,
                 "metadata": {
-                    "source_file": n.get("source_file", ""),
+                    "source_file": doc_meta.get("source_file", n.get("source_file", "")),
                     "oracle_type": n.get("type", ""),
                 },
             }
