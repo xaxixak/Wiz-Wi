@@ -562,6 +562,39 @@ body {
 .layer-btn:hover { background: rgba(255,255,255,0.05); color: var(--text-primary); }
 .layer-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+/* --- Concept cluster bubbles --- */
+.cluster-hull {
+  fill-opacity: 0.06;
+  stroke-width: 2;
+  stroke-opacity: 0.35;
+  stroke-dasharray: none;
+  transition: fill-opacity 0.3s;
+  pointer-events: none;
+}
+.cluster-hull:hover { fill-opacity: 0.15; }
+.cluster-label {
+  font-size: 11px;
+  font-weight: 600;
+  fill-opacity: 0.7;
+  pointer-events: none;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+/* --- Timeline axis --- */
+.timeline-axis line, .timeline-axis path {
+  stroke: var(--border);
+}
+.timeline-axis text {
+  fill: var(--text-muted);
+  font-size: 10px;
+}
+.timeline-lane-label {
+  fill: var(--text-muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
 /* --- Focus buttons --- */
 .focus-btn {
   font-size: 11px;
@@ -668,9 +701,12 @@ body {
           <option value="tree">Tree</option>
           <option value="radial">Radial</option>
           <option value="sphere">Bloom</option>
+          <option value="semantic">Semantic</option>
+          <option value="temporal">Timeline</option>
           <option value="fg3d">Tester</option>
         </select>
         <button class="layer-btn" id="btn-3d-toggle" onclick="toggle3D()" title="Switch between 2D and 3D view" style="font-weight:700;">3D</button>
+        <button class="layer-btn" id="btn-clusters-toggle" onclick="toggleConceptClusters()" title="Toggle concept cluster bubbles" style="display:none;">Clusters</button>
       </div>
 
       <!-- View Layer -->
@@ -1032,6 +1068,10 @@ let showConnectivityGlow = true;
 let _linkEdgeCounts = {};  // edge counts used by link distance function
 let layoutMode = 'force';  // 'force' or 'tree'
 let is3D = false;           // 2D/3D toggle state
+let showConceptClusters = false;   // H2: concept cluster overlay
+let currentCapabilities = {};      // capabilities of currently loaded source
+let clusterG = null;               // H2: SVG group for cluster hulls (behind links)
+let timelineG = null;              // H3: SVG group for timeline axis
 
 // Three.js state
 let threeScene, threeCamera, threeRenderer, threeControls;
@@ -1338,6 +1378,8 @@ function initGraph() {
 
   // Root group for zoom/pan
   g = svg.append('g');
+  clusterG  = g.append('g').attr('class', 'clusters');   // H2: behind everything
+  timelineG = g.append('g').attr('class', 'timeline');   // H3: behind links
   linkG = g.append('g').attr('class', 'links');
   nodeG = g.append('g').attr('class', 'nodes');
 
@@ -1767,6 +1809,9 @@ function updateGraph() {
   simulation.nodes(nodes);
   simulation.force('link').links(links);
 
+  // Clear timeline axis when not in temporal mode
+  if (layoutMode !== 'temporal' && timelineG) timelineG.selectAll('*').remove();
+
   if (layoutMode === 'tree') {
     applyTreeLayout(nodes);
     simulation.stop();
@@ -1779,6 +1824,12 @@ function updateGraph() {
     applySphereLayout(nodes);
     simulation.stop();
     ticked();
+  } else if (layoutMode === 'semantic') {
+    applySemanticLayout(nodes);
+    simulation.stop();
+    ticked();
+  } else if (layoutMode === 'temporal') {
+    applyTemporalLayout(nodes);
   } else {
     simulation.alpha(0.4).restart();
   }
@@ -1859,6 +1910,306 @@ function ticked() {
     // Update nodes
     nodeG.selectAll('.node-group')
       .attr('transform', d => `translate(${d.x},${d.y})`);
+
+    // H2: update concept cluster hulls with live node positions
+    if (showConceptClusters && clusterG) drawConceptClusters();
+  });
+}
+
+// -----------------------------------------------------------------------
+// H2: Concept Cluster Bubbles
+// -----------------------------------------------------------------------
+const CLUSTER_PALETTE = [
+  '#4A90D9','#50C878','#FFD700','#9B59B6','#FF6B6B',
+  '#00CED1','#FF8C42','#E91E63','#8BC34A','#795548',
+  '#2196F3','#FF5722','#009688','#673AB7','#FFC107',
+];
+
+function _hullPath(points) {
+  // Expand hull outward by padding, then draw a smooth closed curve
+  if (!points || points.length < 3) return null;
+  const cx = d3.mean(points, p => p[0]);
+  const cy = d3.mean(points, p => p[1]);
+  const pad = 28;
+  const expanded = points.map(p => {
+    const dx = p[0] - cx, dy = p[1] - cy;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    return [p[0] + dx / len * pad, p[1] + dy / len * pad];
+  });
+  const line = d3.line().curve(d3.curveCatmullRomClosed);
+  return line(expanded);
+}
+
+function drawConceptClusters() {
+  if (!clusterG || !showConceptClusters) {
+    if (clusterG) clusterG.selectAll('*').remove();
+    return;
+  }
+  const { nodes } = getFilteredData();
+
+  // Build concept → nodes map (only nodes with x/y set)
+  const conceptMap = new Map();
+  for (const n of nodes) {
+    if (n.x == null || n.y == null) continue;
+    const tags = (n.concepts && n.concepts.length ? n.concepts : n.tags) || [];
+    for (const tag of tags) {
+      if (!conceptMap.has(tag)) conceptMap.set(tag, []);
+      conceptMap.get(tag).push(n);
+    }
+  }
+
+  // Filter to concepts with ≥ 3 nodes for meaningful hulls
+  const clusters = [...conceptMap.entries()]
+    .filter(([, ns]) => ns.length >= 3)
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, 18); // cap at 18 clusters to avoid clutter
+
+  // Assign stable colors per concept label
+  const allConcepts = [...conceptMap.keys()].sort();
+  const colorOf = label => CLUSTER_PALETTE[allConcepts.indexOf(label) % CLUSTER_PALETTE.length];
+
+  // --- Hulls ---
+  const hullSel = clusterG.selectAll('.cluster-hull')
+    .data(clusters, d => d[0]);
+
+  hullSel.exit().remove();
+
+  const hullEnter = hullSel.enter()
+    .append('path')
+    .attr('class', 'cluster-hull');
+
+  hullEnter.merge(hullSel)
+    .attr('fill', d => colorOf(d[0]))
+    .attr('stroke', d => colorOf(d[0]))
+    .attr('d', ([, ns]) => {
+      const hull = d3.polygonHull(ns.map(n => [n.x, n.y]));
+      return hull ? _hullPath(hull) : null;
+    });
+
+  // --- Labels (at centroid of hull) ---
+  const labelSel = clusterG.selectAll('.cluster-label')
+    .data(clusters, d => d[0]);
+
+  labelSel.exit().remove();
+
+  labelSel.enter()
+    .append('text')
+    .attr('class', 'cluster-label')
+    .merge(labelSel)
+    .attr('fill', d => colorOf(d[0]))
+    .text(d => d[0])
+    .attr('x', ([, ns]) => d3.mean(ns, n => n.x))
+    .attr('y', ([, ns]) => {
+      const hull = d3.polygonHull(ns.map(n => [n.x, n.y]));
+      if (!hull) return d3.mean(ns, n => n.y);
+      const pad = 28;
+      return d3.min(hull, p => p[1]) - pad - 6;
+    });
+}
+
+function toggleConceptClusters() {
+  showConceptClusters = !showConceptClusters;
+  const btn = document.getElementById('btn-clusters-toggle');
+  if (btn) btn.classList.toggle('active', showConceptClusters);
+  if (!showConceptClusters && clusterG) clusterG.selectAll('*').remove();
+  else drawConceptClusters();
+}
+
+// -----------------------------------------------------------------------
+// H1: Semantic Layout (concept-gravity)
+// -----------------------------------------------------------------------
+function applySemanticLayout(nodes) {
+  console.log('[Semantic] Applying to', nodes.length, 'nodes');
+  if (!nodes.length) return;
+  if (!svg || !svg.node()) {
+    console.error('[Semantic] SVG not initialized');
+    return;
+  }
+  const width  = svg.node().clientWidth  || 800;
+  const height = svg.node().clientHeight || 600;
+  console.log('[Semantic] Canvas size:', width, 'x', height);
+
+  // Build concept → node list
+  const conceptMap = new Map();
+  for (const n of nodes) {
+    const tags = (n.concepts && n.concepts.length ? n.concepts : n.tags) || [];
+    const primary = tags[0] || '__ungrouped__';
+    if (!conceptMap.has(primary)) conceptMap.set(primary, []);
+    conceptMap.get(primary).push(n);
+  }
+
+  const groups = [...conceptMap.entries()];
+
+  // Edge case: if only 1 group (all ungrouped), use a simple grid layout instead
+  if (groups.length === 1 && groups[0][0] === '__ungrouped__') {
+    console.log('[Semantic] No concepts found - using grid layout');
+    const cols = Math.ceil(Math.sqrt(nodes.length));
+    const cellW = width / (cols + 1);
+    const cellH = height / (Math.ceil(nodes.length / cols) + 1);
+    console.log('[Semantic] Grid:', cols, 'cols, cell size:', cellW, 'x', cellH);
+    nodes.forEach((n, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      n.x = cellW * (col + 1);
+      n.y = cellH * (row + 1);
+      n.fx = n.x;
+      n.fy = n.y;
+    });
+    console.log('[Semantic] Positioned', nodes.length, 'nodes in grid. Sample:', nodes[0].x, nodes[0].y);
+    return;
+  }
+
+  console.log('[Semantic] Found', groups.length, 'concept groups');
+  const R = Math.min(width, height) * 0.35;
+  const cx = width / 2, cy = height / 2;
+
+  groups.forEach(([label, groupNodes], gi) => {
+    const angle = (gi / groups.length) * 2 * Math.PI;
+    const groupCx = cx + R * Math.cos(angle);
+    const groupCy = cy + R * Math.sin(angle);
+    const innerR  = Math.min(80, 20 + groupNodes.length * 6);
+    groupNodes.forEach((n, ni) => {
+      const a2 = (ni / Math.max(groupNodes.length, 1)) * 2 * Math.PI;
+      n.x = groupCx + innerR * Math.cos(a2);
+      n.y = groupCy + innerR * Math.sin(a2);
+      n.fx = n.x;
+      n.fy = n.y;
+    });
+  });
+  console.log('[Semantic] Positioned', nodes.length, 'nodes in', groups.length, 'groups. Sample:', nodes[0].x, nodes[0].y);
+}
+
+// -----------------------------------------------------------------------
+// H3: Temporal Layout (timeline)
+// -----------------------------------------------------------------------
+function _parseNodeDate(n) {
+  // Try explicit timestamp field first
+  if (n.timestamp) return new Date(n.timestamp);
+  // Try to parse from node ID: e.g. "learning_2026-01-15_..." or "retro_2026-01-22_..."
+  const m = (n.id || '').match(/(\d{4}-\d{2}-\d{2})/);
+  if (m) return new Date(m[1]);
+  return null;
+}
+
+const TIMELINE_TYPE_ORDER = ['principle','retro','pattern','learning','log'];
+
+function applyTemporalLayout(nodes) {
+  console.log('[Timeline] Applying to', nodes.length, 'nodes');
+  if (!nodes.length) return;
+  if (!svg || !svg.node()) {
+    console.error('[Timeline] SVG not initialized');
+    return;
+  }
+  const width  = svg.node().clientWidth  || 800;
+  const height = svg.node().clientHeight || 600;
+
+  const dated   = nodes.filter(n => _parseNodeDate(n) !== null);
+  const undated = nodes.filter(n => _parseNodeDate(n) === null);
+  console.log('[Timeline] Dated:', dated.length, ', Undated:', undated.length);
+
+  // Render timeline axis
+  _renderTimelineAxis(dated, width, height);
+
+  if (dated.length === 0) {
+    // No timestamps found - show all nodes in a simple vertical stack on the left
+    console.warn('[Timeline] No timestamps found - showing all nodes in left stack');
+    nodes.forEach((n, i) => {
+      n.x = 100;
+      n.y = 60 + i * 18;
+      n.fx = n.x;
+      n.fy = n.y;
+    });
+    simulation.stop();
+    ticked();
+    return;
+  }
+
+  const dates = dated.map(n => _parseNodeDate(n));
+  const minDate = new Date(Math.min(...dates));
+  const maxDate = new Date(Math.max(...dates));
+  const margin = { l: 100, r: 40, t: 40, b: 50 };
+  const xScale = d3.scaleTime()
+    .domain([minDate, maxDate])
+    .range([margin.l, width - margin.r]);
+
+  // Lane per node type
+  const types = [...new Set(nodes.map(n => n.type))];
+  const typeOrder = TIMELINE_TYPE_ORDER.filter(t => types.includes(t));
+  for (const t of types) if (!typeOrder.includes(t)) typeOrder.push(t);
+  const laneCount = typeOrder.length || 1;
+  const laneH = (height - margin.t - margin.b) / laneCount;
+
+  // Assign positions — jitter within lane to avoid overlap
+  const laneUsage = new Map(); // 'type_month' → count
+  dated.forEach(n => {
+    const d = _parseNodeDate(n);
+    const laneIdx = typeOrder.indexOf(n.type);
+    const laneY = margin.t + (laneIdx + 0.5) * laneH;
+    const monthKey = `${n.type}_${d.getFullYear()}_${d.getMonth()}`;
+    const slot = laneUsage.get(monthKey) || 0;
+    laneUsage.set(monthKey, slot + 1);
+    const jitter = (slot % 3 - 1) * 12;
+    n.x = xScale(d);
+    n.y = laneY + jitter;
+    n.fx = n.x;
+    n.fy = n.y;
+  });
+
+  // Cluster undated nodes at far left
+  undated.forEach((n, i) => {
+    n.x = margin.l - 60;
+    n.y = margin.t + 20 + i * 16;
+    n.fx = n.x;
+    n.fy = n.y;
+  });
+
+  simulation.stop();
+  ticked();
+}
+
+function _renderTimelineAxis(datedNodes, width, height) {
+  if (!timelineG) return;
+  timelineG.selectAll('*').remove();
+  if (!datedNodes.length) return;
+
+  const margin = { l: 100, r: 40, t: 40, b: 50 };
+  const dates = datedNodes.map(n => _parseNodeDate(n));
+  const minDate = new Date(Math.min(...dates));
+  const maxDate = new Date(Math.max(...dates));
+
+  const xScale = d3.scaleTime()
+    .domain([minDate, maxDate])
+    .range([margin.l, width - margin.r]);
+
+  // Horizontal baseline
+  const axisY = height - margin.b;
+  timelineG.append('g')
+    .attr('class', 'timeline-axis')
+    .attr('transform', `translate(0,${axisY})`)
+    .call(d3.axisBottom(xScale).ticks(6).tickFormat(d3.timeFormat('%b %Y')));
+
+  // Lane labels
+  const types = [...new Set(datedNodes.map(n => n.type))];
+  const typeOrder = TIMELINE_TYPE_ORDER.filter(t => types.includes(t));
+  for (const t of types) if (!typeOrder.includes(t)) typeOrder.push(t);
+  const laneH = (height - margin.t - margin.b) / (typeOrder.length || 1);
+
+  typeOrder.forEach((type, i) => {
+    const y = margin.t + (i + 0.5) * laneH;
+    timelineG.append('text')
+      .attr('class', 'timeline-lane-label')
+      .attr('x', margin.l - 8)
+      .attr('y', y)
+      .attr('text-anchor', 'end')
+      .attr('dominant-baseline', 'middle')
+      .text(type);
+    // Lane separator line
+    if (i > 0) {
+      timelineG.append('line')
+        .attr('x1', margin.l).attr('x2', width - margin.r)
+        .attr('y1', margin.t + i * laneH).attr('y2', margin.t + i * laneH)
+        .attr('stroke', 'rgba(255,255,255,0.07)').attr('stroke-width', 1);
+    }
   });
 }
 
@@ -3740,19 +4091,30 @@ function setLayoutMode(mode) {
 
   if (mode === 'force') {
     releaseTreeLayout(simulation.nodes());
+    if (timelineG) timelineG.selectAll('*').remove();
     simulation.alpha(0.6).restart();
   } else if (mode === 'tree') {
+    if (timelineG) timelineG.selectAll('*').remove();
     applyTreeLayout(nodes);
     simulation.stop();
     ticked();
   } else if (mode === 'radial') {
+    if (timelineG) timelineG.selectAll('*').remove();
     applyRadialLayout(nodes);
     simulation.stop();
     ticked();
   } else if (mode === 'sphere') {
+    if (timelineG) timelineG.selectAll('*').remove();
     applySphereLayout(nodes);
     simulation.stop();
     ticked();
+  } else if (mode === 'semantic') {
+    if (timelineG) timelineG.selectAll('*').remove();
+    applySemanticLayout(nodes);
+    simulation.stop();
+    ticked();
+  } else if (mode === 'temporal') {
+    applyTemporalLayout(nodes);
   }
 
   // If 3D is active, rebuild 3D layout
@@ -3905,6 +4267,7 @@ async function switchSource(sourceId) {
 
     // Apply source-specific type colors and tiers
     const caps = data.capabilities || {};
+    currentCapabilities = caps;
     const extraColors = caps.type_colors || {};
     const extraTiers = caps.type_tiers || {};
     Object.assign(TYPE_COLORS, SOURCE_TYPE_COLORS, extraColors);
@@ -3939,7 +4302,7 @@ async function switchSource(sourceId) {
     }
 
     // Flat graphs (no hierarchy) don't work well with Sphere/Tree/Radial layouts
-    // Auto-switch to Force if needed
+    // Auto-switch to Force if needed (keep Semantic/Temporal which work great for flat)
     if (!caps.has_hierarchy && (layoutMode === 'sphere' || layoutMode === 'tree' || layoutMode === 'radial')) {
       layoutMode = 'force';
       const ls = document.getElementById('layout-select');
@@ -3953,6 +4316,22 @@ async function switchSource(sourceId) {
     // After source switch, re-fit 3D camera once simulation fully settles
     if (is3D) _fitCameraPending = true;
     updateStats();
+
+    // H2/H3: show Clusters button for concept-capable sources
+    const clusterBtn = document.getElementById('btn-clusters-toggle');
+    if (clusterBtn) {
+      const hasConcepts = !!(caps.has_concepts);
+      clusterBtn.style.display = hasConcepts ? '' : 'none';
+      // Auto-enable concept clusters for Oracle/concept sources
+      if (hasConcepts && !showConceptClusters) {
+        showConceptClusters = true;
+        clusterBtn.classList.add('active');
+      } else if (!hasConcepts && showConceptClusters) {
+        showConceptClusters = false;
+        clusterBtn.classList.remove('active');
+        if (clusterG) clusterG.selectAll('*').remove();
+      }
+    }
     checkNodeLimit();
 
     // Update URL

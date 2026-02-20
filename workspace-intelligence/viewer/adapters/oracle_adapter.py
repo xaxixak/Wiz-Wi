@@ -1,5 +1,6 @@
 """Oracle v2 Knowledge Graph Adapter - fetches via HTTP API."""
 import json
+import re
 import urllib.request
 import urllib.error
 from typing import List
@@ -85,8 +86,13 @@ class OracleAdapter(BaseAdapter):
                 display_name = raw_label
             else:
                 display_name = n["id"]
+            # Parse date from node ID (e.g. "learning_2026-01-15_hooks" → "2026-01-15")
+            doc_id = n["id"]
+            date_match = re.search(r'(\d{4}-\d{2}-\d{2})', doc_id)
+            timestamp = date_match.group(1) if date_match else None
+
             node = {
-                "id": n["id"],
+                "id": doc_id,
                 "type": n.get("type", "learning"),
                 "name": display_name,
                 "tier": ORACLE_TYPE_TIERS.get(n.get("type", ""), "meso"),
@@ -100,6 +106,8 @@ class OracleAdapter(BaseAdapter):
                     "oracle_type": n.get("type", ""),
                 },
             }
+            if timestamp:
+                node["timestamp"] = timestamp
             nodes.append(node)
 
         # Transform edges
@@ -133,7 +141,7 @@ class OracleAdapter(BaseAdapter):
                 "has_hierarchy": False,
                 "has_categories": any(n.get("categories") for n in nodes),
                 "has_concepts": any(n.get("concepts") for n in nodes),
-                "has_timestamps": False,
+                "has_timestamps": any(n.get("timestamp") for n in nodes),
                 "has_confidence": True,
                 "edge_groups": ORACLE_EDGE_GROUPS,
                 "type_colors": ORACLE_TYPE_COLORS,
