@@ -5142,6 +5142,8 @@ function apply3DLayout(nodes) {
   else if (layoutMode === 'tree') apply3DTreeLayout(nodes);
   else if (layoutMode === 'radial') apply3DRadialLayout(nodes);
   else if (layoutMode === 'sphere') apply3DSphereLayout(nodes);
+  else if (layoutMode === 'semantic') apply3DSemanticLayout(nodes);
+  else if (layoutMode === 'temporal') apply3DTemporalLayout(nodes);
 }
 
 function apply3DForceLayout(nodes) {
@@ -5470,6 +5472,34 @@ function apply3DSphereLayout(nodes) {
     }
     positioned.add(d.id);
     orphanIdx++;
+  }
+}
+
+function apply3DSemanticLayout(nodes) {
+  // Semantic layout in 3D: project 2D grid/cluster positions to flat XZ plane
+  // The 2D applySemanticLayout already set x,y positions — just map to 3D
+  for (const d of nodes) {
+    const mesh = threeNodeMeshes.get(d.id);
+    if (!mesh) continue;
+    // Map 2D canvas coords to 3D: x → x (centered), y → z (centered), y=0 (flat)
+    const x = (d.x || 0) - 400;  // center around 0
+    const z = (d.y || 0) - 300;  // center around 0
+    const y = 0;  // flat plane
+    mesh.position.set(x, y, z);
+  }
+}
+
+function apply3DTemporalLayout(nodes) {
+  // Timeline layout in 3D: project timeline positions to flat XZ plane
+  // applyTemporalLayout already set x (time), y (lane) — just map to 3D
+  for (const d of nodes) {
+    const mesh = threeNodeMeshes.get(d.id);
+    if (!mesh) continue;
+    // Map 2D timeline coords: x (time axis) → x, y (lane) → z, y=0 (flat)
+    const x = (d.x || 0) - 400;  // center horizontally
+    const z = (d.y || 0) - 300;  // lanes vertically (in 3D, this becomes depth)
+    const y = 0;  // flat plane
+    mesh.position.set(x, y, z);
   }
 }
 
