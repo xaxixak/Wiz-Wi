@@ -7,7 +7,7 @@
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
 <script src="https://unpkg.com/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
-<script src="//unpkg.com/3d-force-graph"></script>
+<!-- 3d-force-graph loaded lazily in enterForceGraph3D() to avoid dual-THREE conflict -->
 <style>
 /* ======================================================================
    CSS: Dark theme, CSS Grid layout
@@ -1105,8 +1105,28 @@ let threeDragMoved = false;        // true if mouse actually moved (skip fly-to)
 let threeDragLastPos = new THREE.Vector3(); // previous drag position for delta
 let threeDragStartScreen = { x: 0, y: 0 }; // screen coords at mousedown
 
-// 3d-force-graph state
+// 3d-force-graph state (lazy-loaded to avoid dual-THREE conflict)
 let fg3dInstance = null;
+let _fg3dLoaded = false;
+let _fg3dLoadPromise = null;
+function _loadForceGraph3D() {
+  if (_fg3dLoaded) return Promise.resolve();
+  if (_fg3dLoadPromise) return _fg3dLoadPromise;
+  const savedTHREE = window.THREE;
+  _fg3dLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = '//unpkg.com/3d-force-graph';
+    script.onload = () => {
+      // Restore our CDN THREE so custom 3D mode materials stay compatible
+      window.THREE = savedTHREE;
+      _fg3dLoaded = true;
+      resolve();
+    };
+    script.onerror = () => reject(new Error('Failed to load 3d-force-graph'));
+    document.head.appendChild(script);
+  });
+  return _fg3dLoadPromise;
+}
 let threeHoveredNode = null;
 
 // Combo node (collapse/expand) state
@@ -4000,7 +4020,8 @@ function applySphereLayout(nodes) {
 // -----------------------------------------------------------------------
 // 3d-force-graph Mode (ForceGraph3D library)
 // -----------------------------------------------------------------------
-function enterForceGraph3D() {
+async function enterForceGraph3D() {
+  await _loadForceGraph3D();
   const container = document.getElementById('fg3d-container');
   const svgEl = document.querySelector('#graph-container svg');
   const threeCanvas = document.getElementById('three-canvas');
@@ -4071,24 +4092,8 @@ function enterForceGraph3D() {
     .nodeColor(n => highlightNodes.has(n) ? (n === hoverNode ? '#ffffff' : '#ffdd57') : n.color)
     .nodeOpacity(0.9)
     .nodeResolution(16)
-    .nodeThreeObject(n => {
-      // Custom geometry by category: octahedron for infra, box for data, sphere for code
-      if (!n._isInfra && !n._isData) return undefined; // default sphere
-      const size = Math.cbrt(n.val) * 1.5;
-      const geometry = n._isInfra
-        ? new THREE.OctahedronGeometry(size, 0)
-        : new THREE.BoxGeometry(size * 1.3, size * 1.3, size * 1.3);
-      const material = new THREE.MeshPhongMaterial({
-        color: n.color,
-        emissive: n.color,
-        emissiveIntensity: 0.15,
-        shininess: 60,
-        transparent: true,
-        opacity: 0.9,
-      });
-      return new THREE.Mesh(geometry, material);
-    })
-    .nodeThreeObjectExtend(false)
+    // Note: nodeThreeObject removed to avoid cross-THREE-instance material conflicts.
+    // Node differentiation handled purely via nodeColor + nodeVal (no custom geometry).
     // Links
     .linkColor('color')
     .linkOpacity(0.4)
@@ -4881,18 +4886,21 @@ function on3DMouseMove(event) {
         }
       }
 
-      // Brighten connected edges
+      // Brighten connected edges (modify properties in-place, never swap material)
       for (const line of threeHighlightLinks) {
-        line.material = line.userData._hlMaterial ||
-          (line.userData._hlMaterial = new THREE.LineBasicMaterial({
-            color: 0xffdd57, transparent: true, opacity: 0.9, linewidth: 2,
-          }));
+        if (!line.userData._origColor) {
+          line.userData._origColor = line.material.color.getHex();
+          line.userData._origOpacity = line.material.opacity;
+        }
+        line.material.color.set(0xffdd57);
+        line.material.opacity = 0.9;
       }
 
-      // Dim unconnected nodes
+      // Dim unconnected nodes (keep visible but clearly dimmed)
       threeNodeMeshes.forEach((m, id) => {
         if (!threeHighlightNodes.has(id)) {
-          m.material.opacity = 0.15;
+          m.material.opacity = 0.4;
+          m.material.emissiveIntensity = 0.05;
         }
       });
 
@@ -4928,10 +4936,11 @@ function _clear3DHighlight() {
     mesh.material.emissiveIntensity = mesh.userData._baseEmissive || 0.1;
     mesh.material.opacity = 0.9;
   });
-  // Restore edge materials
+  // Restore edge materials (modify properties in-place, never swap material)
   for (const line of threeHighlightLinks) {
-    if (line.userData._baseMaterial) {
-      line.material = line.userData._baseMaterial;
+    if (line.userData._origColor !== undefined) {
+      line.material.color.set(line.userData._origColor);
+      line.material.opacity = line.userData._origOpacity;
     }
   }
   threeHighlightNodes.clear();
@@ -5139,12 +5148,25 @@ function _updateThreeDrag() {
 function build3DGraph() {
   if (!threeScene) return;
 
-  // Clear existing 3D objects
-  threeNodeMeshes.forEach(mesh => threeScene.remove(mesh));
+  // Clear existing 3D objects (dispose materials/geometries to prevent leaks)
+  threeNodeMeshes.forEach(mesh => {
+    threeScene.remove(mesh);
+    mesh.geometry.dispose();
+    mesh.material.dispose();
+    // Dispose child glyphs/rings
+    for (const child of [...mesh.children]) {
+      mesh.remove(child);
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) {
+        if (child.material.map) child.material.map.dispose();
+        child.material.dispose();
+      }
+    }
+  });
   threeNodeMeshes.clear();
-  threeEdgeLines.forEach(line => threeScene.remove(line));
+  threeEdgeLines.forEach(line => { threeScene.remove(line); line.geometry.dispose(); });
   threeEdgeLines = [];
-  threeArrowMeshes.forEach(a => threeScene.remove(a));
+  threeArrowMeshes.forEach(a => { threeScene.remove(a); a.geometry.dispose(); a.material.dispose(); });
   threeArrowMeshes = [];
   threeParticles.forEach(p => { threeScene.remove(p); p.geometry.dispose(); p.material.dispose(); });
   threeParticles = [];
@@ -5213,21 +5235,8 @@ function build3DGraph() {
       const glyphMesh = new THREE.Mesh(glyphGeo, glyphMat);
       glyphMesh.position.set(r3d * 0.7, r3d * 0.7, 0); // top-right offset
       mesh.add(glyphMesh);
-      // Sprite label with the count
-      const canvas2 = document.createElement('canvas');
-      canvas2.width = 32; canvas2.height = 32;
-      const ctx2 = canvas2.getContext('2d');
-      ctx2.fillStyle = '#ffffff';
-      ctx2.font = 'bold 22px Arial';
-      ctx2.textAlign = 'center';
-      ctx2.textBaseline = 'middle';
-      ctx2.fillText(String(ec), 16, 16);
-      const spriteTex = new THREE.CanvasTexture(canvas2);
-      const spriteMat = new THREE.SpriteMaterial({ map: spriteTex, transparent: true });
-      const sprite = new THREE.Sprite(spriteMat);
-      sprite.scale.set(6, 6, 1);
-      sprite.position.set(r3d * 0.7, r3d * 0.7, 0);
-      mesh.add(sprite);
+      // Note: Sprite/SpriteMaterial removed — causes refreshMaterialUniforms crash in Three.js r147.
+      // Colored glyph sphere alone conveys connection info (gold=hub 8+, blue=4+, red=stale).
     }
 
     // Collapse indicator: dashed yellow ring around collapsed nodes
