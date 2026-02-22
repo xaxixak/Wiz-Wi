@@ -187,7 +187,7 @@ class WIAdapter(BaseAdapter):
                 name=f.stem,
                 adapter="wi",
                 description=f"{size_kb} KB",
-                group="WI Code Graphs",
+                group="Recent Scans",
                 config={"path": str(f)},
             ))
         return sources
@@ -204,7 +204,7 @@ class WIAdapter(BaseAdapter):
             id=source_id,
             name=Path(graph_path).stem,
             adapter="wi",
-            group="WI Code Graphs",
+            group="Recent Scans",
             description=f"Code graph ({Path(graph_path).stat().st_size // 1024} KB)",
             config={"path": graph_path},
         )
