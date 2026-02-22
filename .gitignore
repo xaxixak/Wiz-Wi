@@ -1,0 +1,4 @@
+*.json
+test-shop/
+NUL
+.archived-tests/
