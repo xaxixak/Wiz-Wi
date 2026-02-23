@@ -3,3 +3,5 @@ __pycache__/
 graphs/
 *.json
 !package.json
+.env
+.env.*

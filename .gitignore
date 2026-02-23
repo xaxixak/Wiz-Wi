@@ -2,3 +2,5 @@
 test-shop/
 NUL
 .archived-tests/
+.env
+.env.*
