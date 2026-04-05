@@ -1,7 +1,0 @@
-__pycache__/
-*.pyc
-graphs/
-*.json
-!package.json
-.env
-.env.*

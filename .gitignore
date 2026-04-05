@@ -1,6 +1,13 @@
+__pycache__/
+*.pyc
+graphs/
 *.json
-test-shop/
-NUL
-.archived-tests/
+!package.json
 .env
 .env.*
+NUL
+nul
+.archived-tests/
+test-shop/
+GitNexus/
+workspace-intelligence/
